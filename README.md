@@ -6,7 +6,98 @@
 
 ## 当前状态
 
-项目处于设计阶段，尚未初始化应用代码。已确认的核心技术栈为 TypeScript、NestJS、React 和 PostgreSQL。
+已搭建 TypeScript 工作区、React 页面骨架、NestJS 接口与独立后台入口，提供共享接口契约、基础测试和持续集成配置。
+
+业务数据、身份认证、数据库访问、持久化队列和模型调用尚未接入。页面不包含示例业务数据，未实现的操作保持禁用。
+
+## 工程结构
+
+```text
+apps/
+  server/       NestJS 接口服务与后台进程入口
+  web/          React + Vite 前端
+packages/
+  contracts/    前后端共用的 Zod 数据契约与 TypeScript 类型
+docs/           产品与架构设计
+```
+
+接口和后台入口位于同一个服务端包，后续共享业务模块，分别运行。
+
+## 本地启动
+
+使用 Node.js 24 长期支持版本和 pnpm 11，具体包管理器版本见根目录 `package.json`。
+
+```sh
+pnpm install
+cp .env.example .env
+pnpm dev
+```
+
+- 前端：http://127.0.0.1:5173。
+- 接口存活检查：http://127.0.0.1:3001/api/health。
+- 前端通过 Vite 代理访问 `/api`，服务端端口读取根目录 `.env` 中的 `PORT`。
+- 开发命令同时监视共享契约、服务端和前端，首次启动会先构建共享契约。
+- 前端开发服务器默认绑定本机并固定端口；端口占用时报告错误，不自动换端口。
+
+存活检查仅表示接口进程能够响应，不代表数据库、队列或模型服务可用。当前前端和测试均不依赖 PostgreSQL。
+
+### 本地 PostgreSQL
+
+先将 `.env` 中的 `POSTGRES_PASSWORD` 替换为自己的本地密码，再启动数据库：
+
+```sh
+pnpm db:up
+```
+
+提供 PostgreSQL 17、持久化卷和健康检查，仅将数据库端口绑定到本机。数据库访问与迁移工具尚未接入，此配置不代表应用已经连接数据库，也不是生产部署方案。
+
+停止数据库，保留数据卷：
+
+```sh
+pnpm db:down
+```
+
+### 构建与运行
+
+```sh
+pnpm build
+pnpm start:api
+```
+
+独立后台入口可在另一个终端验证：
+
+```sh
+pnpm start:worker
+```
+
+后台入口当前只创建并关闭 NestJS 应用上下文，报告尚未配置队列后退出，不执行任务，也不伪装成常驻消费者。接入持久化队列后再增加消费与关闭逻辑。
+
+前端构建产物位于 `apps/web/dist`。Vite 的开发代理不属于生产构建；部署时需要由反向代理将 `/api` 转发到后端，并为页面路由配置回退。
+
+## 质量检查
+
+```sh
+pnpm check
+```
+
+依次运行 ESLint、TypeScript 检查、Vitest 测试、Prettier 检查和所有包的构建。测试覆盖共享契约、真实 HTTP 存活接口、后台上下文生命周期以及前端连接和失败状态。
+
+```sh
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm format:check
+pnpm format
+```
+
+GitHub Actions 在推送和提交合并请求时执行相同检查；是否通过以远程实际运行结果为准。
+
+## 配置与安全
+
+- `.env`、依赖目录、构建产物和测试覆盖率不会提交到仓库。
+- `.env.example` 只有配置说明所需的占位值，不包含真实凭据。
+- 不要把模型密钥、数据库密码或其他服务端凭据放进 `VITE_` 开头的变量。
+- 当前骨架没有身份认证，不应直接开放到公网。
 
 ## 文档
 
