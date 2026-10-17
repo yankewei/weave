@@ -1,5 +1,6 @@
 import 'reflect-metadata';
-import type { INestApplication } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
+import { configureApplication } from './bootstrap.js';
 import { Test } from '@nestjs/testing';
 import { healthResponseSchema } from '@weave/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -7,7 +8,7 @@ import { AppModule } from './app.module.js';
 import { WorkerModule } from './worker.module.js';
 
 describe('API bootstrap', () => {
-  let app: INestApplication;
+  let app: NestExpressApplication;
   let baseUrl: string;
 
   beforeAll(async () => {
@@ -15,8 +16,8 @@ describe('API bootstrap', () => {
       imports: [AppModule],
     }).compile();
 
-    app = module.createNestApplication();
-    app.setGlobalPrefix('api');
+    app = module.createNestApplication<NestExpressApplication>();
+    configureApplication(app);
     await app.listen(0, '127.0.0.1');
     baseUrl = await app.getUrl();
   });
