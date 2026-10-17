@@ -27,6 +27,7 @@ import {
   type Document,
   taskSchema,
   taskEventSchema,
+  taskCommentSchema,
   conversationStateSchema,
   membershipChangeSchema,
   projectMemberSchema,
@@ -869,6 +870,121 @@ describe('authenticated document lifecycle', () => {
       ).status,
     ).toBe(404);
   });
+  it('supports task comments and one-level replies', async () => {
+    const task = await createTask();
+    const createdResponse = await request(
+      `/tasks/${task.id}/comments`,
+      'POST',
+      {
+        body: '  第一条评论  ',
+      },
+    );
+    expect(createdResponse.status).toBe(201);
+    const comment = taskCommentSchema.parse(await createdResponse.json());
+    expect(comment).toMatchObject({
+      taskId: task.id,
+      parentId: null,
+      authorName: '负责人',
+      body: '第一条评论',
+    });
+
+    const replyResponse = await request(`/tasks/${task.id}/comments`, 'POST', {
+      body: '同意，先做这个。',
+      parentId: comment.id,
+    });
+    expect(replyResponse.status).toBe(201);
+    const reply = taskCommentSchema.parse(await replyResponse.json());
+    expect(reply).toMatchObject({
+      parentId: comment.id,
+      body: '同意，先做这个。',
+    });
+
+    const nested = await request(`/tasks/${task.id}/comments`, 'POST', {
+      body: '再回复',
+      parentId: reply.id,
+    });
+    expect(nested.status).toBe(400);
+    expect(((await nested.json()) as { message: string }).message).toBe(
+      '只能回复一级评论。',
+    );
+
+    const empty = await request(`/tasks/${task.id}/comments`, 'POST', {
+      body: '   ',
+    });
+    expect(empty.status).toBe(400);
+
+    const otherTask = await createTask();
+    const wrongParent = await request(
+      `/tasks/${otherTask.id}/comments`,
+      'POST',
+      { body: '跨任务回复', parentId: comment.id },
+    );
+    expect(wrongParent.status).toBe(404);
+    expect(((await wrongParent.json()) as { message: string }).message).toBe(
+      '要回复的评论不存在。',
+    );
+
+    const listed = taskCommentSchema
+      .array()
+      .parse(await (await request(`/tasks/${task.id}/comments`)).json());
+    expect(listed).toHaveLength(2);
+    expect(listed.map((item) => item.id)).toEqual(
+      expect.arrayContaining([comment.id, reply.id]),
+    );
+
+    expect(
+      (
+        await request(
+          `/tasks/${task.id}/comments`,
+          'GET',
+          undefined,
+          outsiderCookie,
+        )
+      ).status,
+    ).toBe(404);
+
+    const outsider = userSchema.parse(
+      await (
+        await request('/auth/session', 'GET', undefined, outsiderCookie)
+      ).json(),
+    );
+    await database.pool.query(
+      "INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,'member')",
+      [workspaceId, outsider.id],
+    );
+    try {
+      const denied = await request(
+        `/tasks/${task.id}/comments/${comment.id}`,
+        'DELETE',
+        undefined,
+        outsiderCookie,
+      );
+      expect(denied.status).toBe(403);
+      expect(((await denied.json()) as { message: string }).message).toBe(
+        '只能删除自己的评论。',
+      );
+    } finally {
+      await database.pool.query(
+        'DELETE FROM workspace_members WHERE workspace_id=$1 AND user_id=$2',
+        [workspaceId, outsider.id],
+      );
+    }
+
+    expect(
+      (await request(`/tasks/${task.id}/comments/${reply.id}`, 'DELETE'))
+        .status,
+    ).toBe(204);
+    expect(
+      (await request(`/tasks/${task.id}/comments/${comment.id}`, 'DELETE'))
+        .status,
+    ).toBe(204);
+    expect(
+      taskCommentSchema
+        .array()
+        .parse(await (await request(`/tasks/${task.id}/comments`)).json()),
+    ).toEqual([]);
+  });
+
   it('turns a conversation into confirmed tasks without writing them early', async () => {
     await database.pool.query(
       `UPDATE change_proposals SET status = 'rejected', resolved_at = now() WHERE project_id = $1 AND status = 'pending'`,

@@ -222,11 +222,28 @@ export const taskEventSchema = z.object({
   after: taskSchema,
   proposalId: z.uuid().nullable(),
 });
+export const taskCommentInputSchema = z
+  .object({
+    body: z.string().trim().min(1).max(4_000),
+    parentId: z.uuid().nullable().optional(),
+  })
+  .strict();
+export const taskCommentSchema = z.object({
+  id: z.uuid(),
+  taskId: z.uuid(),
+  parentId: z.uuid().nullable(),
+  authorId: z.uuid(),
+  authorName: z.string(),
+  body: z.string(),
+  createdAt: z.string(),
+});
 export type Task = z.infer<typeof taskSchema>;
 export type TaskInput = z.infer<typeof taskInputSchema>;
 export type TaskStatus = z.infer<typeof taskStatusSchema>;
 export type TaskPriority = z.infer<typeof taskPrioritySchema>;
 export type TaskEvent = z.infer<typeof taskEventSchema>;
+export type TaskComment = z.infer<typeof taskCommentSchema>;
+export type TaskCommentInput = z.infer<typeof taskCommentInputSchema>;
 export type ProjectMember = z.infer<typeof projectMemberSchema>;
 export type WorkspaceMember = z.infer<typeof workspaceMemberSchema>;
 export type MembershipChange = z.infer<typeof membershipChangeSchema>;

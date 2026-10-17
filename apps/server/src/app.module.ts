@@ -10,6 +10,10 @@ import {
 } from './auth.js';
 import { DocumentsController, DocumentsService } from './documents.js';
 import { TasksController, TasksService } from './tasks.js';
+import {
+  TaskCommentsController,
+  TaskCommentsService,
+} from './task-comments.js';
 import { MembersController, MembersService } from './members.js';
 import {
   WorkspaceStorageController,
@@ -28,6 +32,7 @@ import { StorageSecretBox } from './storage-secret.js';
     AuthController,
     DocumentsController,
     TasksController,
+    TaskCommentsController,
     ConversationsController,
     MembersController,
     WorkspaceStorageController,
@@ -38,6 +43,7 @@ import { StorageSecretBox } from './storage-secret.js';
     SessionGuard,
     DocumentsService,
     TasksService,
+    TaskCommentsService,
     MembersService,
     StorageSecretBox,
     WorkspaceStorageService,
