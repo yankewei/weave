@@ -111,6 +111,7 @@ describe('persisted task board', () => {
     let saved: Task | null = null;
     const fetchMock = vi.fn<typeof fetch>(async (url, options) => {
       if (String(url).endsWith('/members')) return Response.json(members);
+      if (String(url).endsWith('/comments')) return Response.json([]);
       if (options?.method === 'POST') {
         expect(JSON.parse(options.body as string)).toMatchObject({
           title: '验证移动',
@@ -166,6 +167,7 @@ describe('persisted task board', () => {
       'fetch',
       vi.fn<typeof fetch>(async (url, options) => {
         if (String(url).endsWith('/members')) return Response.json(members);
+        if (String(url).endsWith('/comments')) return Response.json([]);
         if (String(url).endsWith('/history'))
           return Response.json([
             {
@@ -223,6 +225,7 @@ describe('persisted task board', () => {
   it('preserves a draft on conflict and allows canceling discard', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (url, options) => {
       if (String(url).endsWith('/members')) return Response.json(members);
+      if (String(url).endsWith('/comments')) return Response.json([]);
       if (String(url).endsWith('/history')) return Response.json([]);
       if (options?.method === 'PUT')
         return Response.json(

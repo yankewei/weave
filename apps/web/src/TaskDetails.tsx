@@ -17,6 +17,7 @@ import {
   taskStatusLabels,
   taskStatuses,
 } from './task-ui.js';
+import { TaskComments } from './TaskComments.js';
 import { useConfirmation } from '@/hooks/use-confirmation';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -57,6 +58,7 @@ export function TaskDetails({
   task,
   initialStatus,
   members,
+  currentUserId,
   onClose,
   onCommitted,
   onDirtyChange,
@@ -66,6 +68,7 @@ export function TaskDetails({
   task: Task | null;
   initialStatus: TaskStatus;
   members: ProjectMember[];
+  currentUserId: string;
   onClose: () => void;
   onCommitted: (task: Task) => Promise<void>;
   onDirtyChange: (dirty: boolean) => void;
@@ -340,6 +343,8 @@ export function TaskDetails({
             </form>
             {task && (
               <>
+                <Separator />
+                <TaskComments taskId={task.id} currentUserId={currentUserId} />
                 <Separator />
                 <section
                   aria-label="任务变更历史"

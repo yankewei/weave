@@ -407,6 +407,7 @@ export function TaskBoard({
           task={editing.task}
           initialStatus={editing.status}
           members={members}
+          currentUserId={currentUserId}
           onClose={() => setEditing(null)}
           onCommitted={committed}
           onDirtyChange={onDirtyChange}
