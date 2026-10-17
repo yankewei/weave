@@ -10,36 +10,41 @@
 
 除健康检查、注册、登录和退出外，接口均要求有效会话。写请求要求 `X-Weave-Request: 1`，若携带 Origin，必须匹配 `APP_ORIGIN`。
 
-| 请求                                        | 用途                                     |
-| ------------------------------------------- | ---------------------------------------- |
-| GET /api/health                             | 进程存活检查，不访问数据库               |
-| GET /api/health/ready                       | 就绪检查，数据库不可用时返回 503         |
-| POST /api/auth/register                     | 注册并创建工作空间、会话                 |
-| POST /api/auth/login                        | 登录并设置会话 Cookie                    |
-| GET /api/auth/session                       | 当前用户                                 |
-| POST /api/auth/logout                       | 撤销当前会话                             |
-| GET /api/workspaces                         | 当前用户的工作空间                       |
-| GET /api/workspaces/:id/projects            | 项目列表                                 |
-| POST /api/workspaces/:id/projects           | 创建项目，输入 name                      |
-| GET /api/workspaces/:id/members             | 当前成员，含姓名、邮箱与角色             |
-| POST /api/workspaces/:id/members            | 管理员按邮箱邀请已注册用户，角色为成员   |
-| DELETE /api/workspaces/:id/members/:userId  | 管理员移除成员，或成员退出自己           |
-| GET /api/account/storage                    | 当前账号的对象存储，不含访问密钥         |
-| PUT /api/account/storage                    | 保存当前账号的对象存储                   |
-| GET /api/workspaces/:id/storage             | 当前工作空间的有效对象存储，不含访问密钥 |
-| PUT /api/workspaces/:id/storage             | 管理员保存工作空间自己的对象存储         |
-| PUT /api/workspaces/:id/storage/shortcut    | 管理员把工作空间指向自己的存储配置       |
-| DELETE /api/workspaces/:id/storage/shortcut | 管理员取消这个快捷方式                   |
-| GET /api/projects/:id/documents             | 文档列表，不返回正文                     |
-| POST /api/projects/:id/documents            | 创建文档，输入 title、body               |
-| GET /api/documents/:id                      | 当前文档                                 |
-| PUT /api/documents/:id                      | 修改文档，输入 title、body、baseVersion  |
-| GET /api/documents/:id/revisions            | 全部版本快照和操作来源                   |
-| POST /api/documents/:id/restore             | 恢复，输入 baseVersion、revisionVersion  |
+| 请求                                          | 用途                                           |
+| --------------------------------------------- | ---------------------------------------------- |
+| GET /api/health                               | 进程存活检查，不访问数据库                     |
+| GET /api/health/ready                         | 就绪检查，数据库不可用时返回 503               |
+| POST /api/auth/register                       | 注册并创建工作空间、会话                       |
+| POST /api/auth/login                          | 登录并设置会话 Cookie                          |
+| GET /api/auth/session                         | 当前用户                                       |
+| POST /api/auth/logout                         | 撤销当前会话                                   |
+| GET /api/workspaces                           | 当前用户的工作空间                             |
+| GET /api/workspaces/:id/projects              | 项目列表                                       |
+| POST /api/workspaces/:id/projects             | 创建项目，输入 name                            |
+| GET /api/workspaces/:id/members               | 当前成员，含姓名、邮箱与角色                   |
+| POST /api/workspaces/:id/members              | 管理员按邮箱邀请已注册用户，角色为成员         |
+| DELETE /api/workspaces/:id/members/:userId    | 管理员移除成员，或成员退出自己                 |
+| GET /api/account/storage                      | 当前账号的对象存储，不含访问密钥               |
+| PUT /api/account/storage                      | 保存当前账号的对象存储                         |
+| GET /api/workspaces/:id/storage               | 当前工作空间的有效对象存储，不含访问密钥       |
+| PUT /api/workspaces/:id/storage               | 管理员保存工作空间自己的对象存储               |
+| PUT /api/workspaces/:id/storage/shortcut      | 管理员把工作空间指向自己的存储配置             |
+| DELETE /api/workspaces/:id/storage/shortcut   | 管理员取消这个快捷方式                         |
+| GET /api/tasks/:id/comments                   | 任务评论与回复，按创建时间排序                 |
+| POST /api/tasks/:id/comments                  | 发表评论，输入 body、可选 parentId             |
+| DELETE /api/tasks/:taskId/comments/:commentId | 作者删除自己的评论；一级评论删除时级联删除回复 |
+| GET /api/projects/:id/documents               | 文档列表，不返回正文                           |
+| POST /api/projects/:id/documents              | 创建文档，输入 title、body                     |
+| GET /api/documents/:id                        | 当前文档                                       |
+| PUT /api/documents/:id                        | 修改文档，输入 title、body、baseVersion        |
+| GET /api/documents/:id/revisions              | 全部版本快照和操作来源                         |
+| POST /api/documents/:id/restore               | 恢复，输入 baseVersion、revisionVersion        |
 
 输入由共享 Zod 契约校验。无权访问和不存在的对象统一返回 404；无效会话返回 401，版本冲突返回 409。响应禁用缓存。
 
 非成员调用成员接口返回 404。非管理员邀请或移除他人返回 403「只有管理员可以管理成员。」重复邀请、以及会让空间失去最后一名管理员的移除，返回 409。移除在同一事务中先把该成员负责的任务改为未分配并写入任务历史，再拒绝其在本空间内待确认的提案，然后删除成员关系。邮箱不存在时返回 404，且这一查询发生在确认调用者是管理员之后。
+
+任务评论按当前成员关系校验，非成员返回 404。支持一级回复：回复一条回复返回 400「只能回复一级评论。」只有作者可以删除自己的评论；删除一级评论会通过数据库外键级联删除其回复。评论独立于 `task_events`，不写入不可变的任务变更历史。
 
 每个账号最多一份对象存储配置，响应不包含访问密钥。访问密钥使用 AES-256-GCM 加密后写入数据库，密钥来自服务端 `STORAGE_ENCRYPTION_KEY`；旧明文记录在下次保存时替换为密文。首次保存必须提供访问密钥；之后留空表示保留原密钥。每个工作空间最多一份对象存储：可以是自己的配置，也可以是指向某位管理员个人配置的快捷方式。快捷方式只记录管理员，不复制访问密钥；该管理员更新自己的配置后，工作空间读到的是新配置。非成员读取或保存工作空间存储返回 404，非管理员返回 403「只有管理员可以设置存储。」还没有个人配置时，快捷方式返回 400「请先保存你的存储配置。」该管理员离开工作空间后，快捷方式一并取消，个人配置仍留在账号上。
 
