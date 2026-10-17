@@ -138,9 +138,12 @@ export class WorkspaceStorageService {
          WHERE user_id = $1 FOR UPDATE`,
         [userId],
       );
+      const currentSecret = current.rows[0]?.secretAccessKey;
       const secretAccessKey = input.secretAccessKey
         ? this.secrets.encrypt(input.secretAccessKey)
-        : current.rows[0]?.secretAccessKey;
+        : currentSecret
+          ? this.secrets.encryptIfNeeded(currentSecret)
+          : undefined;
       if (!secretAccessKey) throw new BadRequestException(missingSecret);
       const saved = await client.query<WorkspaceStorage>(
         `INSERT INTO user_storage(
@@ -188,9 +191,12 @@ export class WorkspaceStorageService {
          WHERE workspace_id = $1 FOR UPDATE`,
         [workspaceId],
       );
+      const currentSecret = current.rows[0]?.secretAccessKey;
       const secretAccessKey = input.secretAccessKey
         ? this.secrets.encrypt(input.secretAccessKey)
-        : current.rows[0]?.secretAccessKey;
+        : currentSecret
+          ? this.secrets.encryptIfNeeded(currentSecret)
+          : undefined;
       if (!secretAccessKey) throw new BadRequestException(missingSecret);
       await client.query(
         `INSERT INTO workspace_storage(

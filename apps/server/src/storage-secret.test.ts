@@ -39,8 +39,12 @@ describe('StorageSecretBox', () => {
     );
   });
 
-  it('keeps legacy plaintext readable', () => {
+  it('keeps legacy plaintext readable and re-encrypts it on save', () => {
     expect(box.decrypt('legacy-secret')).toBe('legacy-secret');
+    const upgraded = box.encryptIfNeeded('legacy-secret');
+    expect(upgraded).toMatch(/^v1\./);
+    expect(box.decrypt(upgraded)).toBe('legacy-secret');
+    expect(box.encryptIfNeeded(upgraded)).toBe(upgraded);
   });
 
   it('requires a valid 32-byte base64 key', () => {

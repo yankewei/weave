@@ -24,6 +24,10 @@ export class StorageSecretBox {
     return value.startsWith(prefix);
   }
 
+  encryptIfNeeded(value: string) {
+    return this.isEncrypted(value) ? value : this.encrypt(value);
+  }
+
   encrypt(value: string) {
     const iv = randomBytes(12);
     const cipher = createCipheriv(algorithm, this.key(), iv);
