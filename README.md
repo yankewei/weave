@@ -104,7 +104,7 @@ pnpm start:api
 - 登录和注册共用按来源 IP 计数的数据库限流，每 15 分钟最多 20 次。
 - 写请求需要 `X-Weave-Request: 1`，浏览器 Origin 必须匹配 `APP_ORIGIN`，未启用跨域访问。
 - `NODE_ENV=production` 时 Cookie 使用 Secure，需通过 HTTPS 访问。生产反向代理、限流和注册策略仍需部署前细化；当前不提供邮箱验证、密码找回或账号管理。
-- 对象存储访问密钥使用 AES-256-GCM 加密后保存。启动前需配置 32 字节 base64 的 `STORAGE_ENCRYPTION_KEY`（可用 `openssl rand -base64 32` 生成）；未配置时仍可读取已有配置，但保存密钥会返回 503。
+- 对象存储访问密钥使用 AES-256-GCM 加密后保存。启动前需配置 32 字节 base64 的 `STORAGE_ENCRYPTION_KEY`（可用 `openssl rand -base64 32` 生成）；未配置时仍可读取已有配置，但保存配置会返回 503；旧明文记录会在下次保存时替换为密文。
 - 不要将数据库密码或模型密钥放入 `VITE_` 变量。任务对话通过 Vercel AI SDK（`ai` 与 `@ai-sdk/openai-compatible`）调用 Command Code 的 Chat Completions，使用服务端 `CMD_API_KEY`，可选 `CMD_MODEL`（默认 `deepseek/deepseek-v4.1-flash`）。回复以服务器发送事件流式返回。
 - 设置页里，每个账号在自己的名字下面保存一份 S3 兼容存储；工作空间名称下面可以另外保存一份，也可以改用当前管理员自己的那一份。改用时不复制访问密钥，管理员更新自己的配置后工作空间跟着变；该管理员离开后，工作空间与这份个人存储的关联会取消。访问密钥加密后只保存在数据库中，接口不会再把它返回给浏览器。图片上传尚未接入。已有数据库需运行 `pnpm db:migrate` 应用 `004_workspace_storage.sql`、`005_user_storage.sql` 和 `006_storage_secret_encryption.sql`。
 - 已有数据库需运行 `pnpm db:migrate` 应用 `003_task_conversations.sql`。未配置密钥时可以打开对话，但发送会提示无法生成提案，不会创建任务。
