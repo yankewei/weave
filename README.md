@@ -57,7 +57,7 @@ pnpm dev
 ```
 
 - 前端：http://127.0.0.1:5173，打开后注册账号。
-- API 存活检查：http://127.0.0.1:3001/api/health。
+- API 存活检查：http://127.0.0.1:3001/api/health；就绪检查：http://127.0.0.1:3001/api/health/ready，数据库不可用时返回 503。
 - 数据库使用 PostgreSQL 17。首次启动及更新迁移文件后，需要显式运行 `pnpm db:migrate`；API 不会自动修改数据库结构。
 - 若数据库尚未健康，等待后重试迁移命令。
 - 可配置 `DATABASE_URL` 替代 `POSTGRES_*` 应用连接配置；Compose 仍使用 `POSTGRES_*`。
@@ -94,7 +94,7 @@ pnpm start:api
 
 `check` 包含 ESLint、类型检查、Vitest、Prettier 与构建。服务端集成测试使用 `embedded-postgres` 创建临时的真实 PostgreSQL 17 实例，自动迁移并清理，不读取 `.env`、不访问开发数据库，也不依赖 Docker。
 
-测试覆盖权限隔离、权限撤销、并发冲突、历史恢复、无变化编辑、事务回滚、历史不可变、会话与请求来源校验，以及前端登录、保存、差异与草稿保护。CI 执行相同检查。测试依赖的原生 PostgreSQL 包仅允许在工作区配置中列明的安装脚本。
+测试覆盖权限隔离、权限撤销、并发冲突、历史恢复、无变化编辑、事务回滚、历史不可变、会话与请求来源校验、存储密钥加密、数据库就绪检查与迁移校验值，以及前端登录、保存、差异与草稿保护。CI 执行相同检查。测试依赖的原生 PostgreSQL 包仅允许在工作区配置中列明的安装脚本。
 
 前端产物位于 `apps/web/dist`；服务端部署需同时包含 `dist` 和 `migrations`。Vite 开发代理不属于生产产物，部署时由同源反向代理转发 `/api`。前端路由使用浏览器历史。开发服务器和 `vite preview` 会把页面路径回退到 `index.html`；生产静态托管也要这样做，否则刷新深链接会 404。
 
@@ -104,9 +104,11 @@ pnpm start:api
 - 登录和注册共用按来源 IP 计数的数据库限流，每 15 分钟最多 20 次。
 - 写请求需要 `X-Weave-Request: 1`，浏览器 Origin 必须匹配 `APP_ORIGIN`，未启用跨域访问。
 - `NODE_ENV=production` 时 Cookie 使用 Secure，需通过 HTTPS 访问。生产反向代理、限流和注册策略仍需部署前细化；当前不提供邮箱验证、密码找回或账号管理。
+- 对象存储访问密钥使用 AES-256-GCM 加密后保存。启动前需配置 32 字节 base64 的 `STORAGE_ENCRYPTION_KEY`（可用 `openssl rand -base64 32` 生成）；未配置时仍可读取已有配置，但保存密钥会返回 503。
 - 不要将数据库密码或模型密钥放入 `VITE_` 变量。任务对话通过 Vercel AI SDK（`ai` 与 `@ai-sdk/openai-compatible`）调用 Command Code 的 Chat Completions，使用服务端 `CMD_API_KEY`，可选 `CMD_MODEL`（默认 `deepseek/deepseek-v4.1-flash`）。回复以服务器发送事件流式返回。
-- 设置页里，每个账号在自己的名字下面保存一份 S3 兼容存储；工作空间名称下面可以另外保存一份，也可以改用当前管理员自己的那一份。改用时不复制访问密钥，管理员更新自己的配置后工作空间跟着变；该管理员离开后，工作空间与这份个人存储的关联会取消。访问密钥只保存在数据库中，接口不会再把它返回给浏览器。图片上传尚未接入。已有数据库需运行 `pnpm db:migrate` 应用 `004_workspace_storage.sql` 和 `005_user_storage.sql`。
+- 设置页里，每个账号在自己的名字下面保存一份 S3 兼容存储；工作空间名称下面可以另外保存一份，也可以改用当前管理员自己的那一份。改用时不复制访问密钥，管理员更新自己的配置后工作空间跟着变；该管理员离开后，工作空间与这份个人存储的关联会取消。访问密钥加密后只保存在数据库中，接口不会再把它返回给浏览器。图片上传尚未接入。已有数据库需运行 `pnpm db:migrate` 应用 `004_workspace_storage.sql`、`005_user_storage.sql` 和 `006_storage_secret_encryption.sql`。
 - 已有数据库需运行 `pnpm db:migrate` 应用 `003_task_conversations.sql`。未配置密钥时可以打开对话，但发送会提示无法生成提案，不会创建任务。
+- 迁移文件会记录 SHA-256 校验值；已应用的文件被修改时迁移会失败，应改为新增迁移。
 - `.env`、依赖、构建和覆盖率不会提交；开源许可证见 [LICENSE](LICENSE)。
 
 ## 文档
