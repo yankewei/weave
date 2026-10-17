@@ -19,7 +19,8 @@
     "format:check": "prettier . --check",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm format:check && pnpm build",
     "db:up": "docker compose --env-file .env up -d postgres",
-    "db:down": "docker compose --env-file .env down"
+    "db:down": "docker compose --env-file .env down",
+    "db:migrate": "pnpm --filter @weave/contracts build && pnpm --filter @weave/server db:migrate"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
