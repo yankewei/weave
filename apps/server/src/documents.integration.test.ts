@@ -33,12 +33,14 @@ import {
   workspaceMemberSchema,
   userStorageStateSchema,
   workspaceStorageStateSchema,
+  readinessResponseSchema,
   type TaskInput,
 } from '@weave/contracts';
 import { AppModule } from './app.module.js';
 import { Database } from './database.js';
 import { migrate } from './migrate.js';
 import { CommandCodeTaskProposalModel } from './task-proposal-model.js';
+import { StorageSecretBox } from './storage-secret.js';
 
 // Real PostgreSQL in an isolated temporary directory; never use a developer's .env database.
 describe('authenticated document lifecycle', () => {
@@ -118,6 +120,10 @@ describe('authenticated document lifecycle', () => {
       'DATABASE_URL',
       `postgresql://postgres:integration-only@127.0.0.1:${port}/weave_test`,
     );
+    vi.stubEnv(
+      'STORAGE_ENCRYPTION_KEY',
+      Buffer.alloc(32, 7).toString('base64'),
+    );
     const module = await Test.createTestingModule({
       imports: [AppModule],
     })
@@ -187,6 +193,17 @@ describe('authenticated document lifecycle', () => {
     await postgres?.stop();
     if (directory) await rm(directory, { recursive: true, force: true });
     vi.unstubAllEnvs();
+  });
+
+  it('reports database readiness', async () => {
+    const response = await fetch(`${baseUrl}/api/health/ready`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(readinessResponseSchema.parse(await response.json())).toEqual({
+      status: 'ok',
+      service: 'weave-api',
+      database: 'ok',
+    });
   });
 
   it('persists creation, edits and restoration as immutable versions with audit provenance', async () => {
@@ -1315,7 +1332,10 @@ describe('authenticated document lifecycle', () => {
       'SELECT secret_access_key FROM workspace_storage WHERE workspace_id = $1',
       [workspaceId],
     );
-    expect(stored.rows[0]?.secret_access_key).toBe('secret-key');
+    const encrypted = stored.rows[0]!.secret_access_key;
+    expect(encrypted).toMatch(/^v1\./);
+    expect(encrypted).not.toBe('secret-key');
+    expect(new StorageSecretBox().decrypt(encrypted)).toBe('secret-key');
 
     const replaced = workspaceStorageStateSchema.parse(
       await (
@@ -1337,7 +1357,7 @@ describe('authenticated document lifecycle', () => {
       'SELECT secret_access_key FROM workspace_storage WHERE workspace_id = $1',
       [workspaceId],
     );
-    expect(kept.rows[0]?.secret_access_key).toBe('secret-key');
+    expect(kept.rows[0]?.secret_access_key).toBe(encrypted);
 
     await request(`/workspaces/${workspaceId}/members`, 'POST', {
       email: 'other@example.com',
@@ -1366,6 +1386,31 @@ describe('authenticated document lifecycle', () => {
         [workspaceId, outsider.id],
       );
     }
+  });
+
+  it('stores a maximum-length encrypted storage secret', async () => {
+    const secret = 's'.repeat(256);
+    const response = await request(
+      `/workspaces/${workspaceId}/storage`,
+      'PUT',
+      {
+        endpoint: 'https://account.r2.cloudflarestorage.com',
+        region: 'auto',
+        bucket: 'weave-images',
+        prefix: '',
+        accessKeyId: 'long-key',
+        secretAccessKey: secret,
+      },
+    );
+    expect(response.status).toBe(200);
+    const stored = await database.pool.query<{ secret_access_key: string }>(
+      'SELECT secret_access_key FROM workspace_storage WHERE workspace_id = $1',
+      [workspaceId],
+    );
+    expect(stored.rows[0]!.secret_access_key).toMatch(/^v1\./);
+    expect(
+      new StorageSecretBox().decrypt(stored.rows[0]!.secret_access_key),
+    ).toBe(secret);
   });
 
   it('keeps personal storage and can point a workspace at the acting admin', async () => {
@@ -1436,7 +1481,9 @@ describe('authenticated document lifecycle', () => {
       'SELECT secret_access_key FROM user_storage WHERE user_id = $1',
       [ownerId],
     );
-    expect(personal.rows[0]?.secret_access_key).toBe('owner-secret');
+    const personalSecret = personal.rows[0]!.secret_access_key;
+    expect(personalSecret).toMatch(/^v1\./);
+    expect(new StorageSecretBox().decrypt(personalSecret)).toBe('owner-secret');
 
     const linked = workspaceStorageStateSchema.parse(
       await (

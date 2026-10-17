@@ -20,6 +20,7 @@ import {
   ConversationsService,
 } from './conversations.js';
 import { CommandCodeTaskProposalModel } from './task-proposal-model.js';
+import { StorageSecretBox } from './storage-secret.js';
 
 @Module({
   controllers: [
@@ -38,6 +39,7 @@ import { CommandCodeTaskProposalModel } from './task-proposal-model.js';
     DocumentsService,
     TasksService,
     MembersService,
+    StorageSecretBox,
     WorkspaceStorageService,
     CommandCodeTaskProposalModel,
     ConversationsService,

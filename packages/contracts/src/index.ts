@@ -5,7 +5,12 @@ export const healthResponseSchema = z.object({
   service: z.literal('weave-api'),
 });
 
+export const readinessResponseSchema = healthResponseSchema.extend({
+  database: z.literal('ok'),
+});
+
 export type HealthResponse = z.infer<typeof healthResponseSchema>;
+export type ReadinessResponse = z.infer<typeof readinessResponseSchema>;
 
 export const credentialsSchema = z
   .object({

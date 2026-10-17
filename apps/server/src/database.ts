@@ -28,6 +28,10 @@ export class Database implements OnModuleDestroy {
     );
   }
 
+  async ping() {
+    await this.pool.query('SELECT 1');
+  }
+
   async transaction<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.pool.connect().catch(() => {
       throw new ServiceUnavailableException('数据库不可用，请检查数据库连接。');

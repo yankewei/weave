@@ -23,6 +23,7 @@ import {
 import type { PoolClient } from 'pg';
 import { SessionGuard, type AuthorizedRequest } from './auth.js';
 import { Database } from './database.js';
+import { StorageSecretBox } from './storage-secret.js';
 import { SchemaPipe } from './validation.js';
 
 const missingWorkspace = '工作空间不存在或无权访问。';
@@ -63,7 +64,10 @@ function visible(row: StoredRow): WorkspaceStorage | null {
 
 @Injectable()
 export class WorkspaceStorageService {
-  constructor(@Inject(Database) private readonly database: Database) {}
+  constructor(
+    @Inject(Database) private readonly database: Database,
+    @Inject(StorageSecretBox) private readonly secrets: StorageSecretBox,
+  ) {}
 
   private async requireAdmin(
     client: PoolClient,
@@ -134,8 +138,9 @@ export class WorkspaceStorageService {
          WHERE user_id = $1 FOR UPDATE`,
         [userId],
       );
-      const secretAccessKey =
-        input.secretAccessKey ?? current.rows[0]?.secretAccessKey;
+      const secretAccessKey = input.secretAccessKey
+        ? this.secrets.encrypt(input.secretAccessKey)
+        : current.rows[0]?.secretAccessKey;
       if (!secretAccessKey) throw new BadRequestException(missingSecret);
       const saved = await client.query<WorkspaceStorage>(
         `INSERT INTO user_storage(
@@ -183,8 +188,9 @@ export class WorkspaceStorageService {
          WHERE workspace_id = $1 FOR UPDATE`,
         [workspaceId],
       );
-      const secretAccessKey =
-        input.secretAccessKey ?? current.rows[0]?.secretAccessKey;
+      const secretAccessKey = input.secretAccessKey
+        ? this.secrets.encrypt(input.secretAccessKey)
+        : current.rows[0]?.secretAccessKey;
       if (!secretAccessKey) throw new BadRequestException(missingSecret);
       await client.query(
         `INSERT INTO workspace_storage(
