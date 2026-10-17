@@ -107,10 +107,14 @@ pnpm start:api
 - 不要将数据库密码或模型密钥放入 `VITE_` 变量。任务对话通过 Vercel AI SDK（`ai` 与 `@ai-sdk/openai-compatible`）调用 Command Code 的 Chat Completions，使用服务端 `CMD_API_KEY`，可选 `CMD_MODEL`（默认 `deepseek/deepseek-v4.1-flash`）。回复以服务器发送事件流式返回。
 - 设置页里，每个账号在自己的名字下面保存一份 S3 兼容存储；工作空间名称下面可以另外保存一份，也可以改用当前管理员自己的那一份。改用时不复制访问密钥，管理员更新自己的配置后工作空间跟着变；该管理员离开后，工作空间与这份个人存储的关联会取消。访问密钥只保存在数据库中，接口不会再把它返回给浏览器。图片上传尚未接入。已有数据库需运行 `pnpm db:migrate` 应用 `004_workspace_storage.sql` 和 `005_user_storage.sql`。
 - 已有数据库需运行 `pnpm db:migrate` 应用 `003_task_conversations.sql`。未配置密钥时可以打开对话，但发送会提示无法生成提案，不会创建任务。
-- `.env`、依赖、构建和覆盖率不会提交；开源许可证尚未选择。
+- `.env`、依赖、构建和覆盖率不会提交；开源许可证见 [LICENSE](LICENSE)。
 
 ## 文档
 
 - [决策汇总](docs/decisions.md)
 - [产品与数据设计](docs/product-and-data-design.md)
 - [文档闭环实现](docs/document-lifecycle.md)
+
+## 许可证
+
+本项目采用 [MIT](LICENSE) 许可证。
