@@ -13,32 +13,40 @@
 - 项目任务看板：待办、进行中、已完成；拖拽流转与列内排序，刷新后保留顺序。
 - 任务详情支持描述、验收标准、优先级、成员负责人、评论与一级回复、搜索筛选及不可变变更历史。
 - 项目内 AI 对话：描述要做的事，模型返回待确认的任务提案；确认后才写入看板，并在任务历史中保留提案来源。
-- 任务详情支持发表评论和回复一级评论；成员可以查看和发表评论，作者可以删除自己的评论。
 - 管理员按邮箱邀请已注册成员、查看成员并移除成员；成员可以退出，空间至少保留一名管理员。
 - 每个账号可以保存个人 S3 兼容存储，工作空间可以保存自己的存储或改用某位管理员的个人存储。
 - 根据当前成员关系隔离工作空间数据。
 
-任务提案目前只创建新任务，不会修改已有任务；修改已有任务仍需手工编辑。文档修改提案、持久化任务队列、邮箱验证与密码重置尚未实现。模型调用目前在 API 请求内完成，后台进程仍不消费队列。每个注册账号创建独立工作空间，暂未提供申请加入已有空间的界面。当前版本用于本地开发验证。
+任务提案目前只创建新任务，不会修改已有任务；修改已有任务仍需手工编辑。文档修改提案、持久化任务队列、邮箱验证与密码重置尚未实现。模型调用在请求内完成，超过 70 秒仍在执行中的记录会在下次访问时标记失败。每个注册账号创建独立工作空间，暂未提供申请加入已有空间的界面。
 
 ## 工程结构
 
+应用是一个 Next.js App Router 全栈项目，页面、接口与数据访问在同一个部署单元内。
+
 ```text
-apps/
-  server/       NestJS API、文档事务逻辑与后台入口
-    migrations/ 按序执行的 PostgreSQL SQL 迁移
-  web/          React + Vite 登录、文档编辑和历史界面
-packages/
-  contracts/    Zod 输入输出契约与 TypeScript 类型
-docs/           产品、架构和实现说明
+app/                      App Router：页面与 /api Route Handlers
+  api/                    与页面同源的 HTTP 接口
+  workspaces/             工作空间、项目、看板、文档与设置
+  login/                  登录与注册
+components/               页面组件与 shadcn/ui 控件
+  ui/                     shadcn 基础控件
+lib/
+  contracts.ts            Zod 输入输出契约与共享类型
+  services/               事务、权限与 SQL（文档、任务、评论、成员、存储、对话）
+  auth.ts                 会话、密码与限流
+  db.ts                   node-postgres 连接池
+migrations/               按序执行的 PostgreSQL SQL 迁移
+scripts/                  迁移与端到端验证脚本
+docs/                     产品、架构和实现说明
 ```
 
-接口与后台入口分别运行。后台入口仍只验证上下文后退出，未接入任务消费者。
+服务端渲染的页面直接读取会话与工作空间；交互密集的部分是客户端组件，通过同源的 `/api` 调用 Route Handlers。数据结构与写入规则仍然只有一套：Route Handler 调用 `lib/services`，事务、版本检查、权限与审计都在服务层完成。
 
 ## UI 规范
 
-前端使用 shadcn/ui Nova + Base UI、Tailwind v4 与 Lucide。官方 shadcn skill 已安装在 `.agents/skills/shadcn`，版本来源记录在 `skills-lock.json`。后续 UI 工作遵守 `apps/web/AGENTS.md` 与 `apps/web/DESIGN.md`，通过 `apps/web/components.json` 读取配置。
+前端使用 shadcn/ui Nova + Base UI、Tailwind v4 与 Lucide。官方 shadcn skill 已安装在 `.agents/skills/shadcn`，版本来源记录在 `skills-lock.json`。后续 UI 工作遵守 `AGENTS.md` 与 `DESIGN.md`，通过 `components.json` 读取配置。
 
-在 `apps/web` 目录执行 `pnpm dlx shadcn@latest info --json` 查看项目配置；先查 `docs` 再从 `@shadcn` 添加组件。页面使用统一主题和组件变体，ESLint 禁止绕过官方控件与使用 `window.confirm`。
+在仓库根目录执行 `pnpm dlx shadcn@latest info --json` 查看项目配置；先查 `docs` 再从 `@shadcn` 添加组件。页面使用统一主题和组件变体，ESLint 禁止绕过官方控件与使用 `window.confirm`。
 
 ## 本地启动
 
@@ -57,14 +65,13 @@ pnpm db:migrate
 pnpm dev
 ```
 
-- 前端：http://127.0.0.1:5173，打开后注册账号。
-- API 存活检查：http://127.0.0.1:3001/api/health；就绪检查：http://127.0.0.1:3001/api/health/ready，数据库不可用时返回 503。
-- 数据库使用 PostgreSQL 17。首次启动及更新迁移文件后，需要显式运行 `pnpm db:migrate`；API 不会自动修改数据库结构。
+- 应用地址：http://127.0.0.1:3000，打开后注册账号。
+- 存活检查：http://127.0.0.1:3000/api/health；就绪检查：http://127.0.0.1:3000/api/health/ready，数据库不可用时返回 503。
+- 数据库使用 PostgreSQL 17。首次启动及更新迁移文件后，需要显式运行 `pnpm db:migrate`；应用不会自动修改数据库结构。
 - 若数据库尚未健康，等待后重试迁移命令。
-- 可配置 `DATABASE_URL` 替代 `POSTGRES_*` 应用连接配置；Compose 仍使用 `POSTGRES_*`。
-- `APP_ORIGIN` 应与浏览器访问地址一致，默认为 `http://127.0.0.1:5173`，不要混用 `localhost`。
-- Vite 将 `/api` 代理到服务端，首次开发启动会构建共享契约。
-- 数据库未接入时存活接口仍返回成功，业务接口不可用。
+- 可配置 `DATABASE_URL` 替代 `POSTGRES_*` 连接配置；Compose 仍使用 `POSTGRES_*`。
+- `APP_ORIGIN` 应与浏览器访问地址一致，默认为 `http://127.0.0.1:3000`，不要混用 `localhost`。
+- 页面与接口同源，开发时不需要额外的代理配置。
 
 停止本地数据库并保留数据：
 
@@ -78,11 +85,11 @@ pnpm db:down
 
 在工作空间顶部或侧栏打开「设置」。这一页按主人分成两组：工作空间名称下面是成员和这个工作空间的存储，账号名称下面是个人存储。管理员可以邀请已经注册的邮箱；移除成员或自己退出时，此人负责的任务会改为未分配。空间里至少保留一名管理员。
 
-项目内点击“任务看板”创建任务，拖动卡片手柄调整状态与顺序，也可以在详情面板修改状态。搜索与负责人、优先级筛选只影响展示。已有数据库需运行 `pnpm db:migrate` 应用 `002_task_board.sql` 和 `003_task_conversations.sql`。
+项目内点击“任务看板”创建任务，拖动卡片手柄调整状态与顺序，也可以在详情面板修改状态。搜索与负责人、优先级筛选只影响展示。
 
 在首页描述要做的事，或点一张起点卡片。AI 返回任务提案；点击确认后，这些任务进入待办，并出现在输入框上方的产出卡片里。拒绝或模型失败都不会创建任务。看板和文档页面可以从右侧打开同一条对话。
 
-地址可以打开具体页面：`/workspaces/工作空间/settings`、`/workspaces/工作空间/projects/项目`、其后的 `/board`，以及 `/documents/文档`。项目地址打开的是这条对话。刷新或把链接交给已登录的成员会打开同一页。未登录时先显示登录，登录后仍回到该地址。对话不写进地址。
+地址可以打开具体页面：`/workspaces/工作空间/settings`、`/workspaces/工作空间/projects/项目`、其后的 `/board`，以及 `/documents/文档`。项目地址打开的是这条对话。刷新或把链接交给已登录的成员会打开同一页。未登录时由服务端重定向到登录页，登录后回到首页。对话不写进地址。
 
 切换文档或离开页面会提示未保存的修改。草稿仅在当前页面内存中保留，未提供离线草稿持久化。发生版本冲突时，先复制需要保留的内容，再加载最新版本继续编辑。
 
@@ -90,14 +97,29 @@ pnpm db:down
 
 ```sh
 pnpm check
-pnpm start:api
+pnpm start
 ```
 
-`check` 包含 ESLint、类型检查、Vitest、Prettier 与构建。服务端集成测试使用 `embedded-postgres` 创建临时的真实 PostgreSQL 17 实例，自动迁移并清理，不读取 `.env`、不访问开发数据库，也不依赖 Docker。
+`check` 包含 ESLint、类型检查、Vitest、Prettier 与构建。`pnpm start` 启动已经构建的生产服务。
 
-测试覆盖权限隔离、权限撤销、并发冲突、历史恢复、无变化编辑、事务回滚、历史不可变、会话与请求来源校验、任务评论与回复、存储密钥加密、数据库就绪检查与迁移校验值，以及前端登录、保存、差异与草稿保护。CI 执行相同检查。测试依赖的原生 PostgreSQL 包仅允许在工作区配置中列明的安装脚本。
+集成测试使用 `embedded-postgres` 创建临时的真实 PostgreSQL 17 实例，自动迁移并清理，不读取 `.env`、不访问开发数据库，也不依赖 Docker。测试覆盖权限隔离、权限撤销、并发冲突、历史恢复、无变化编辑、事务回滚、历史不可变、任务评论与回复、成员移除、存储密钥加密与迁移校验值。`scripts/e2e.mjs` 是额外的浏览器级验证：启动生产构建并通过 HTTP 走完注册、项目、文档、任务、评论与页面渲染。
 
-前端产物位于 `apps/web/dist`；服务端部署需同时包含 `dist` 和 `migrations`。Vite 开发代理不属于生产产物，部署时由同源反向代理转发 `/api`。前端路由使用浏览器历史。开发服务器和 `vite preview` 会把页面路径回退到 `index.html`；生产静态托管也要这样做，否则刷新深链接会 404。
+构建产物位于 `.next`。
+
+## 部署
+
+应用可以直接部署到 Vercel：导入仓库即可，Next.js 会被自动识别，无需 `vercel.json`。需要的环境变量：
+
+| 变量                     | 说明                                                                  |
+| ------------------------ | --------------------------------------------------------------------- |
+| `DATABASE_URL`           | 托管 PostgreSQL 连接串，建议使用带 pooler 的地址（Neon、Supabase 等） |
+| `DATABASE_POOL_MAX`      | 每个实例的连接上限，Serverless 环境建议 2–3                           |
+| `APP_ORIGIN`             | 站点地址，例如 `https://weave.example.com`，必须与浏览器地址完全一致  |
+| `STORAGE_ENCRYPTION_KEY` | 32 字节 base64 密钥，`openssl rand -base64 32`                        |
+| `CMD_API_KEY`            | Command Code 服务端密钥                                               |
+| `CMD_MODEL`              | 可选，默认 `deepseek/deepseek-v4.1-flash`                             |
+
+数据库结构与数据不在构建流程里改动：部署后需要针对生产库执行一次 `DATABASE_URL=... pnpm db:migrate:remote`。首次部署前请确认数据库允许来自 Vercel 的连接，并按实例数收紧连接上限。
 
 ## 配置与边界
 
@@ -105,11 +127,10 @@ pnpm start:api
 - 登录和注册共用按来源 IP 计数的数据库限流，每 15 分钟最多 20 次。
 - 写请求需要 `X-Weave-Request: 1`，浏览器 Origin 必须匹配 `APP_ORIGIN`，未启用跨域访问。
 - `NODE_ENV=production` 时 Cookie 使用 Secure，需通过 HTTPS 访问。生产反向代理、限流和注册策略仍需部署前细化；当前不提供邮箱验证、密码找回或账号管理。
-- 对象存储访问密钥使用 AES-256-GCM 加密后保存。启动前需配置 32 字节 base64 的 `STORAGE_ENCRYPTION_KEY`（可用 `openssl rand -base64 32` 生成）；未配置时仍可读取已有配置，但保存配置会返回 503；旧明文记录会在下次保存时替换为密文。
-- 不要将数据库密码或模型密钥放入 `VITE_` 变量。任务对话通过 Vercel AI SDK（`ai` 与 `@ai-sdk/openai-compatible`）调用 Command Code 的 Chat Completions，使用服务端 `CMD_API_KEY`，可选 `CMD_MODEL`（默认 `deepseek/deepseek-v4.1-flash`）。回复以服务器发送事件流式返回。
-- 设置页里，每个账号在自己的名字下面保存一份 S3 兼容存储；工作空间名称下面可以另外保存一份，也可以改用当前管理员自己的那一份。改用时不复制访问密钥，管理员更新自己的配置后工作空间跟着变；该管理员离开后，工作空间与这份个人存储的关联会取消。访问密钥加密后只保存在数据库中，接口不会再把它返回给浏览器。图片上传尚未接入。已有数据库需运行 `pnpm db:migrate` 应用 `004_workspace_storage.sql`、`005_user_storage.sql` 和 `006_storage_secret_encryption.sql`。
-- 已有数据库需运行 `pnpm db:migrate` 应用 `003_task_conversations.sql`。未配置密钥时可以打开对话，但发送会提示无法生成提案，不会创建任务。
-- 任务评论需要运行 `pnpm db:migrate` 应用 `007_task_comments.sql`。评论独立于不可变的任务变更历史；删除一级评论会一并删除其回复。
+- 对象存储访问密钥使用 AES-256-GCM 加密后保存。启动前需配置 32 字节 base64 的 `STORAGE_ENCRYPTION_KEY`；未配置时仍可读取已有配置，但保存配置会返回 503；旧明文记录会在下次保存时替换为密文。
+- 不要把数据库密码或模型密钥写入任何 `NEXT_PUBLIC_` 变量，它们会被打进浏览器产物。
+- 任务对话通过 Vercel AI SDK（`ai` 与 `@ai-sdk/openai-compatible`）调用 Command Code 的 Chat Completions，使用服务端 `CMD_API_KEY`，可选 `CMD_MODEL`。回复以服务器发送事件流式返回。
+- 设置页里，每个账号在自己的名字下面保存一份 S3 兼容存储；工作空间名称下面可以另外保存一份，也可以改用当前管理员自己的那一份。改用时不复制访问密钥，管理员更新自己的配置后工作空间跟着变；该管理员离开后，关联会取消。接口不会返回访问密钥。图片上传尚未接入。
 - 迁移文件会记录 SHA-256 校验值；已应用的文件被修改时迁移会失败，应改为新增迁移。
 - `.env`、依赖、构建和覆盖率不会提交；开源许可证见 [LICENSE](LICENSE)。
 

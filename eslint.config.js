@@ -4,12 +4,21 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
+const browserSources = [
+  'app/**/*.{ts,tsx}',
+  'components/**/*.{ts,tsx}',
+  'hooks/**/*.{ts,tsx}',
+];
+
+const uiSources = ['components/ui/**/*.tsx'];
+
 export default [
   {
     ignores: [
-      '**/dist/**',
-      '**/coverage/**',
-      '**/node_modules/**',
+      'node_modules/**',
+      'coverage/**',
+      '.next/**',
+      'next-env.d.ts',
       '.agents/skills/**',
     ],
   },
@@ -21,7 +30,7 @@ export default [
     },
   },
   {
-    files: ['apps/web/src/**/*.{ts,tsx}'],
+    files: browserSources,
     languageOptions: {
       globals: globals.browser,
     },
@@ -31,6 +40,13 @@ export default [
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
+    },
+  },
+  {
+    // Fast refresh only applies to the component layer; route files also export
+    // metadata and segment config.
+    files: ['components/**/*.{ts,tsx}', 'hooks/**/*.{ts,tsx}'],
+    rules: {
       'react-refresh/only-export-components': [
         'error',
         { allowConstantExport: true },
@@ -38,7 +54,7 @@ export default [
     },
   },
   {
-    files: ['apps/web/src/components/ui/**/*.tsx'],
+    files: uiSources,
     rules: {
       // shadcn intentionally co-locates variants and Sidebar context exports.
       'react-refresh/only-export-components': [
@@ -60,8 +76,8 @@ export default [
     },
   },
   {
-    files: ['apps/web/src/**/*.tsx'],
-    ignores: ['apps/web/src/components/ui/**', 'apps/web/src/**/*.test.tsx'],
+    files: ['components/**/*.tsx'],
+    ignores: [...uiSources, '**/*.test.tsx'],
     rules: {
       'no-restricted-syntax': [
         'error',

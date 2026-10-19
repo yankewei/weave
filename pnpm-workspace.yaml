@@ -1,9 +1,5 @@
-packages:
-  - apps/*
-  - packages/*
-
+# pnpm 11 reads build-script permissions from this file even with a single package.
 allowBuilds:
-  '@nestjs/core': false
   '@embedded-postgres/darwin-arm64': true
   '@embedded-postgres/darwin-x64': true
   '@embedded-postgres/linux-x64': true

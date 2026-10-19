@@ -3,3 +3,5 @@ dist/
 coverage/
 pnpm-lock.yaml
 .agents/skills/
+.next/
+next-env.d.ts

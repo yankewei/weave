@@ -10,10 +10,10 @@
 
 ### 已确认的技术决策
 
-- 后端：TypeScript + NestJS。
+- 全栈：TypeScript + Next.js App Router，页面与 Route Handlers 在同一个应用内。
 - 前端：React + TypeScript。
 - 数据库：PostgreSQL。
-- 架构：模块化单体，接口服务与后台进程分别运行，共享业务代码。
+- 架构：模块化单体，页面、Route Handlers 与服务层在同一个 Next.js 应用内运行。
 - AI 修改流程：生成提案 → 用户确认 → 校验权限与版本 → 事务写入。
 - 数据库访问采用 node-postgres 与 SQL 迁移；身份认证采用邮箱密码与数据库会话；AI 使用 AI SDK 与 Command Code。持久化任务队列尚未选定。
 
