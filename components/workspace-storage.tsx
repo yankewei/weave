@@ -3,27 +3,34 @@
 import { useEffect, useState } from 'react';
 import {
   workspaceStorageStateSchema,
-  type StorageShortcut,
-  type WorkspaceStorage,
+  type WorkspaceStorage as Storage,
 } from '@/lib/contracts';
 import { AlertCircleIcon, CheckIcon } from 'lucide-react';
 import { api } from '@/lib/api';
-import { StorageFields, type StorageForm } from '@/components/storage-fields';
 import { useConfirmation } from '@/hooks/use-confirmation';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 
-const empty: StorageForm = {
+const empty: Storage = {
   endpoint: '',
   region: '',
   bucket: '',
@@ -31,40 +38,56 @@ const empty: StorageForm = {
   accessKeyId: '',
 };
 
+const fields = [
+  {
+    key: 'endpoint',
+    label: '服务地址',
+    maxLength: 300,
+    required: true,
+    placeholder: 'https://账户编号.r2.cloudflarestorage.com',
+  },
+  {
+    key: 'region',
+    label: '区域',
+    maxLength: 64,
+    required: true,
+    placeholder: 'auto',
+    description: 'Cloudflare R2 填 auto。',
+  },
+  { key: 'bucket', label: '桶', maxLength: 63, required: true },
+  {
+    key: 'prefix',
+    label: '目录',
+    maxLength: 200,
+    required: false,
+    placeholder: 'images',
+    description: '可以留空。图片会放在这个目录下。',
+  },
+  { key: 'accessKeyId', label: '访问密钥编号', maxLength: 128, required: true },
+] as const;
+
 export function WorkspaceStorage({
   workspaceId,
   workspaceName,
-  userId,
-  userName,
 }: {
   workspaceId: string;
   workspaceName: string;
-  userId: string;
-  userName: string;
 }) {
   const { confirm, confirmationDialog } = useConfirmation();
-  const [saved, setSaved] = useState<WorkspaceStorage | null>(null);
-  const [shortcut, setShortcut] = useState<StorageShortcut | null>(null);
+  const [saved, setSaved] = useState<Storage | null>(null);
   const [form, setForm] = useState(empty);
   const [secret, setSecret] = useState('');
   const [loading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0);
-  const [pending, setPending] = useState<'save' | 'shortcut' | 'clear' | null>(
-    null,
-  );
+  const [pending, setPending] = useState<'save' | 'clear' | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const busy = pending !== null;
-  const ownsSecret = Boolean(saved) && !shortcut;
 
-  function apply(state: {
-    storage: WorkspaceStorage | null;
-    shortcut: StorageShortcut | null;
-  }) {
-    setSaved(state.storage);
-    setShortcut(state.shortcut);
-    setForm(state.shortcut ? empty : (state.storage ?? empty));
+  function apply(storage: Storage | null) {
+    setSaved(storage);
+    setForm(storage ?? empty);
     setSecret('');
   }
 
@@ -76,14 +99,11 @@ export function WorkspaceStorage({
       .then((state) => {
         if (controller.signal.aborted) return;
         setSaved(state.storage);
-        setShortcut(state.shortcut);
-        setForm(state.shortcut ? empty : (state.storage ?? empty));
+        setForm(state.storage ?? empty);
         setSecret('');
       })
       .catch((caught: unknown) => {
         if (controller.signal.aborted) return;
-        setSaved(null);
-        setShortcut(null);
         setLoadFailed(true);
         setError(
           caught instanceof Error ? caught.message : '存储配置加载失败。',
@@ -96,7 +116,7 @@ export function WorkspaceStorage({
   }, [retry, workspaceId]);
 
   async function save() {
-    if (!ownsSecret && secret.trim() === '') {
+    if (!saved && secret.trim() === '') {
       setError('请填写访问密钥。');
       return;
     }
@@ -104,20 +124,19 @@ export function WorkspaceStorage({
     setError('');
     setNotice('');
     try {
-      apply(
-        await api(
-          `/workspaces/${workspaceId}/storage`,
-          workspaceStorageStateSchema,
-          {
-            method: 'PUT',
-            body: JSON.stringify({
-              ...form,
-              ...(secret.trim() ? { secretAccessKey: secret } : {}),
-            }),
-          },
-        ),
+      const state = await api(
+        `/workspaces/${workspaceId}/storage`,
+        workspaceStorageStateSchema,
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            ...form,
+            ...(secret.trim() ? { secretAccessKey: secret } : {}),
+          }),
+        },
       );
-      setNotice(`已保存${workspaceName}的存储。`);
+      apply(state.storage);
+      setNotice(`${workspaceName}之后上传的图片会存到这个 S3。`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '存储配置保存失败。');
     } finally {
@@ -125,64 +144,47 @@ export function WorkspaceStorage({
     }
   }
 
-  async function linkMine() {
-    if (ownsSecret) {
-      const accepted = await confirm({
-        title: `让${workspaceName}改用${userName}的个人存储？`,
-        description: `${workspaceName}单独保存的访问密钥会被去掉，之后跟随${userName}的个人存储。`,
-        confirmLabel: `让${workspaceName}使用${userName}的个人存储`,
-      });
-      if (!accepted) return;
-    }
-    setPending('shortcut');
-    setError('');
-    setNotice('');
-    try {
-      apply(
-        await api(
-          `/workspaces/${workspaceId}/storage/shortcut`,
-          workspaceStorageStateSchema,
-          { method: 'PUT' },
-        ),
-      );
-      setNotice(`已让${workspaceName}使用${userName}的个人存储。`);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '存储配置保存失败。');
-    } finally {
-      setPending(null);
-    }
-  }
-
-  async function clearShortcut() {
-    const name = shortcut?.name ?? '该管理员';
+  async function clear() {
+    const accepted = await confirm({
+      title: `让${workspaceName}改回默认存储？`,
+      description:
+        '之后上传的图片存到 Vercel Blob。已经存在这个 S3 里的图片将无法显示，访问密钥会从服务端删除。',
+      confirmLabel: '改回默认存储',
+    });
+    if (!accepted) return;
     setPending('clear');
     setError('');
     setNotice('');
     try {
-      apply(
-        await api(
-          `/workspaces/${workspaceId}/storage/shortcut`,
-          workspaceStorageStateSchema,
-          { method: 'DELETE' },
-        ),
+      const state = await api(
+        `/workspaces/${workspaceId}/storage`,
+        workspaceStorageStateSchema,
+        { method: 'DELETE' },
       );
-      setNotice(`${workspaceName}已取消使用${name}的个人存储。`);
+      apply(state.storage);
+      setNotice(`${workspaceName}已改回默认存储。`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '存储配置保存失败。');
     } finally {
       setPending(null);
     }
   }
-
-  const usingMine = shortcut?.userId === userId && Boolean(saved);
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>{workspaceName}的存储</CardTitle>
         <CardDescription>
-          可以保存自己的一份，也可以改用一位管理员的个人存储。访问密钥只留在服务端。
+          图片默认存到 Vercel Blob。填写 S3
+          兼容存储后，之后上传的图片改存到这里。图片只有成员可以看到，访问密钥只留在服务端。
         </CardDescription>
+        {!loading && !loadFailed && (
+          <CardAction>
+            <Badge variant={saved ? 'default' : 'secondary'}>
+              {saved ? '自定义 S3' : 'Vercel Blob'}
+            </Badge>
+          </CardAction>
+        )}
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {loading ? (
@@ -192,50 +194,63 @@ export function WorkspaceStorage({
             <Skeleton className="h-8 w-full" />
           </div>
         ) : loadFailed ? null : (
-          <>
-            {shortcut && (
-              <div className="flex flex-col gap-1">
-                <p>
+          <form
+            id="workspace-storage"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void save();
+            }}
+          >
+            <FieldGroup>
+              {fields.map((field) => (
+                <Field key={field.key} data-disabled={busy}>
+                  <FieldLabel htmlFor={`workspace-storage-${field.key}`}>
+                    {field.label}
+                  </FieldLabel>
+                  <Input
+                    id={`workspace-storage-${field.key}`}
+                    value={form[field.key]}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        [field.key]: event.target.value,
+                      }))
+                    }
+                    required={field.required}
+                    maxLength={field.maxLength}
+                    autoComplete="off"
+                    disabled={busy}
+                    placeholder={
+                      'placeholder' in field ? field.placeholder : undefined
+                    }
+                  />
+                  {'description' in field && (
+                    <FieldDescription>{field.description}</FieldDescription>
+                  )}
+                </Field>
+              ))}
+              <Field data-disabled={busy}>
+                <FieldLabel htmlFor="workspace-storage-secret">
+                  访问密钥
+                </FieldLabel>
+                <Input
+                  id="workspace-storage-secret"
+                  type="password"
+                  value={secret}
+                  onChange={(event) => setSecret(event.target.value)}
+                  maxLength={256}
+                  autoComplete="new-password"
+                  required={!saved}
+                  disabled={busy}
+                />
+                <FieldDescription>
                   {saved
-                    ? `${workspaceName}正在使用${shortcut.name}的个人存储。`
-                    : `${shortcut.name}的个人存储现在不可用。${workspaceName}读不到存储位置。`}
-                </p>
-                {saved && (
-                  <p className="text-muted-foreground">
-                    {saved.endpoint} · {saved.region} · {saved.bucket}
-                    {saved.prefix ? ` · ${saved.prefix}` : ''}
-                  </p>
-                )}
-                <p className="text-muted-foreground">
-                  {`在下面保存后，${workspaceName}改用自己填写的存储。`}
-                </p>
-              </div>
-            )}
-            <form
-              id="workspace-storage"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void save();
-              }}
-            >
-              <StorageFields
-                idPrefix="workspace-storage"
-                form={form}
-                secret={secret}
-                secretRequired={!ownsSecret}
-                secretDescription={
-                  ownsSecret
                     ? '已保存访问密钥。留空则保持不变。'
-                    : '密钥保存后不会再显示。'
-                }
-                busy={busy}
-                onChange={(key, value) =>
-                  setForm((current) => ({ ...current, [key]: value }))
-                }
-                onSecret={setSecret}
-              />
-            </form>
-          </>
+                    : '密钥保存后不会再显示。'}
+                </FieldDescription>
+              </Field>
+            </FieldGroup>
+          </form>
         )}
         {error && (
           <Alert variant="destructive">
@@ -247,12 +262,10 @@ export function WorkspaceStorage({
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={busy}
                   onClick={() => {
                     setLoading(true);
                     setError('');
                     setLoadFailed(false);
-                    setNotice('');
                     setRetry((value) => value + 1);
                   }}
                 >
@@ -271,35 +284,22 @@ export function WorkspaceStorage({
       </CardContent>
       {!loading && !loadFailed && (
         <CardFooter className="flex-wrap justify-end gap-2">
-          {shortcut && (
+          {saved && (
             <Button
               type="button"
               variant="outline"
               disabled={busy}
               onClick={() => {
-                void clearShortcut();
+                void clear();
               }}
             >
               {pending === 'clear' && <Spinner data-icon="inline-start" />}
-              取消使用{shortcut.name}的个人存储
+              改回默认存储
             </Button>
           )}
-          <Button
-            type="button"
-            variant="outline"
-            disabled={busy || usingMine}
-            onClick={() => {
-              void linkMine();
-            }}
-          >
-            {pending === 'shortcut' && <Spinner data-icon="inline-start" />}
-            {usingMine
-              ? `${workspaceName}正在使用${userName}的个人存储`
-              : `让${workspaceName}使用${userName}的个人存储`}
-          </Button>
           <Button type="submit" form="workspace-storage" disabled={busy}>
             {pending === 'save' && <Spinner data-icon="inline-start" />}
-            保存{workspaceName}的存储
+            保存 S3 存储
           </Button>
         </CardFooter>
       )}

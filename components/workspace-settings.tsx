@@ -4,7 +4,6 @@ import { useState } from 'react';
 import type { User, WorkspaceMember } from '@/lib/contracts';
 import { useLeaveWorkspace } from '@/lib/current-user';
 import { useWorkspaces } from '@/lib/workspace-list';
-import { UserStorage } from '@/components/user-storage';
 import { WorkspaceMembers } from '@/components/workspace-members';
 import { WorkspaceStorage } from '@/components/workspace-storage';
 import {
@@ -13,7 +12,6 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
 
 export function WorkspaceSettings({
   workspaceId,
@@ -37,7 +35,7 @@ export function WorkspaceSettings({
       <div className="flex flex-col gap-3">
         <h1 className="text-3xl font-medium tracking-tight">设置</h1>
         <p className="text-sm leading-6 text-muted-foreground">
-          上面一组属于当前工作空间，下面一组属于你的账号。标题就是它们的名字。
+          工作空间名称下面是成员和图片存储。管理员可以邀请已经注册的账号。
         </p>
       </div>
       <section
@@ -67,8 +65,6 @@ export function WorkspaceSettings({
           <WorkspaceStorage
             workspaceId={workspaceId}
             workspaceName={workspaceName}
-            userId={user.id}
-            userName={user.name}
           />
         ) : viewerRole === 'member' ? (
           <Card>
@@ -80,25 +76,6 @@ export function WorkspaceSettings({
             </CardHeader>
           </Card>
         ) : null}
-      </section>
-      <Separator />
-      <section
-        className="flex flex-col gap-4"
-        aria-labelledby="settings-account-name"
-      >
-        <div className="flex flex-col gap-2">
-          <p className="text-sm text-muted-foreground">账号</p>
-          <h2
-            id="settings-account-name"
-            className="text-lg font-medium tracking-tight"
-          >
-            {user.name}
-          </h2>
-          <p className="text-sm leading-6 text-muted-foreground">
-            个人存储属于{user.name}。切换工作空间后，这里仍然是这份配置。
-          </p>
-        </div>
-        <UserStorage key={user.id} userName={user.name} />
       </section>
     </section>
   );

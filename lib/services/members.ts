@@ -94,11 +94,6 @@ export function remove(
        WHERE workspace_id = $1 AND initiator_id = $2 AND status = 'pending'`,
       [workspaceId, target.userId],
     );
-    // The shortcut follows this admin's personal storage and ends with their membership.
-    await client.query(
-      'DELETE FROM workspace_storage WHERE workspace_id = $1 AND source_user_id = $2',
-      [workspaceId, target.userId],
-    );
     await client.query(
       'DELETE FROM workspace_members WHERE workspace_id = $1 AND user_id = $2',
       [workspaceId, target.userId],

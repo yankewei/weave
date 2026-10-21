@@ -99,16 +99,21 @@ export const workspaceStorageSchema = z.object({
   prefix: z.string(),
   accessKeyId: z.string(),
 });
-export const storageShortcutSchema = z.object({
-  userId: z.uuid(),
-  name: z.string(),
-});
-export const userStorageStateSchema = z.object({
-  storage: workspaceStorageSchema.nullable(),
-});
 export const workspaceStorageStateSchema = z.object({
   storage: workspaceStorageSchema.nullable(),
-  shortcut: storageShortcutSchema.nullable(),
+});
+// Uploads go through the app body limit, so stay below Vercel's 4.5 MB.
+export const imageUploadMaxBytes = 4 * 1024 * 1024;
+export const imageUploadTypes = [
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+] as const;
+export const uploadSchema = z.object({
+  id: z.uuid(),
+  url: z.string(),
+  fileName: z.string(),
 });
 export const projectInputSchema = z
   .object({ name: z.string().trim().min(1).max(100) })
@@ -152,9 +157,8 @@ export type User = z.infer<typeof userSchema>;
 export type Workspace = z.infer<typeof workspaceSchema>;
 export type WorkspaceStorage = z.infer<typeof workspaceStorageSchema>;
 export type WorkspaceStorageInput = z.infer<typeof workspaceStorageInputSchema>;
-export type StorageShortcut = z.infer<typeof storageShortcutSchema>;
-export type UserStorageState = z.infer<typeof userStorageStateSchema>;
 export type WorkspaceStorageState = z.infer<typeof workspaceStorageStateSchema>;
+export type Upload = z.infer<typeof uploadSchema>;
 export type Project = z.infer<typeof projectSchema>;
 export type Document = z.infer<typeof documentSchema>;
 export type DocumentSummary = z.infer<typeof documentSummarySchema>;
