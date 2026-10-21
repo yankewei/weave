@@ -110,22 +110,23 @@ pnpm start
 
 应用可以直接部署到 Vercel：导入仓库即可，Next.js 会被自动识别，无需 `vercel.json`。需要的环境变量：
 
-| 变量                     | 说明                                                                       |
-| ------------------------ | -------------------------------------------------------------------------- |
-| `DATABASE_URL`           | 托管 PostgreSQL 连接串，建议使用带 pooler 的地址（Neon、Supabase 等）      |
-| `DATABASE_POOL_MAX`      | 每个实例的连接上限，Serverless 环境建议 2–3                                |
-| `APP_ORIGIN`             | 站点地址，例如 `https://weave.example.com`，必须与浏览器地址完全一致       |
-| `CMD_API_KEY`            | Command Code 服务端密钥                                                    |
-| `CMD_MODEL`              | 可选，默认 `deepseek/deepseek-v4.1-flash`                                  |
-| `BLOB_READ_WRITE_TOKEN`  | 默认图片存储使用的私有 Vercel Blob；在 Vercel 关联 Blob 存储后自动注入     |
-| `STORAGE_ENCRYPTION_KEY` | 32 字节 base64 密钥，加密工作空间的 S3 访问密钥：`openssl rand -base64 32` |
+| 变量                     | 说明                                                                                                           |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`           | 托管 PostgreSQL 连接串，建议使用带 pooler 的地址（Neon、Supabase 等）                                          |
+| `DATABASE_POOL_MAX`      | 每个实例的连接上限，Serverless 环境建议 2–3                                                                    |
+| `APP_ORIGIN`             | 站点地址，例如 `https://weave.example.com`，必须与浏览器地址完全一致                                           |
+| `CMD_API_KEY`            | Command Code 服务端密钥                                                                                        |
+| `CMD_MODEL`              | 可选，默认 `deepseek/deepseek-v4.1-flash`                                                                      |
+| `BLOB_READ_WRITE_TOKEN`  | 默认图片存储使用的私有 Vercel Blob；在 Vercel 关联 Blob 存储后自动注入                                         |
+| `STORAGE_ENCRYPTION_KEY` | 32 字节 base64 密钥，加密工作空间的 S3 访问密钥：`openssl rand -base64 32`                                     |
+| `TRUSTED_PROXY_HOPS`     | 可选，默认 1。应用前面会追加 `X-Forwarded-For` 的代理层数，用于识别登录限流的客户端地址；CDN 加 nginx 时设为 2 |
 
 数据库结构与数据不在构建流程里改动：部署后需要针对生产库执行一次 `DATABASE_URL=... pnpm db:migrate:remote`。首次部署前请确认数据库允许来自 Vercel 的连接，并按实例数收紧连接上限。
 
 ## 配置与边界
 
 - 密码使用随机盐和 scrypt 派生；会话通过 HttpOnly、SameSite Cookie 传递，数据库仅保存令牌摘要。
-- 登录和注册共用按来源 IP 计数的数据库限流，每 15 分钟最多 20 次。
+- 登录和注册共用按来源 IP 计数的数据库限流，每 15 分钟最多 20 次。注册每次都计数；登录先占用一次额度，密码正确时退还，所以只有失败的登录会累计。来源 IP 取 `X-Forwarded-For` 中由可信代理追加的条目，客户端自己伪造的前缀不会生效。
 - 写请求需要 `X-Weave-Request: 1`，浏览器 Origin 必须匹配 `APP_ORIGIN`，未启用跨域访问。
 - `NODE_ENV=production` 时 Cookie 使用 Secure，需通过 HTTPS 访问。生产反向代理、限流和注册策略仍需部署前细化；当前不提供邮箱验证、密码找回或账号管理。
 - 不要把数据库密码或模型密钥写入任何 `NEXT_PUBLIC_` 变量，它们会被打进浏览器产物。

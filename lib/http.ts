@@ -112,7 +112,14 @@ export function uuid(value: string | undefined, label: string) {
   return value;
 }
 
+// Proxies append the address they saw, so only the rightmost entries are
+// trustworthy; anything to their left came from the client. Vercel and a single
+// reverse proxy need one hop; set TRUSTED_PROXY_HOPS for chains such as CDN + nginx.
 export function clientIp(request: Request) {
-  const forwarded = request.headers.get('x-forwarded-for');
-  return forwarded?.split(',')[0]?.trim() || 'unknown';
+  const entries = (request.headers.get('x-forwarded-for') ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const hops = Math.max(1, Number(process.env.TRUSTED_PROXY_HOPS) || 1);
+  return entries[Math.max(0, entries.length - hops)] ?? 'unknown';
 }

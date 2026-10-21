@@ -202,6 +202,80 @@ describe('services', () => {
     expect(history).toHaveLength(2);
   });
 
+  it('renumbers a column instead of growing positions without bound', async () => {
+    const board = await services.workspaces.createProject(userId, workspaceId, {
+      name: '排序项目',
+    });
+    const add = (title: string) =>
+      services.tasks.create(userId, board.id, {
+        title,
+        description: '',
+        acceptanceCriteria: '',
+        status: 'done',
+        priority: 'normal',
+        assigneeId: null,
+      });
+    const first = await add('首');
+    const last = await add('尾');
+    const middle: string[] = [];
+    // Each move lands right before the last task, halving the same gap every time.
+    for (let index = 0; index < 40; index += 1) {
+      const task = await services.tasks.create(userId, board.id, {
+        title: `中${index}`,
+        description: '',
+        acceptanceCriteria: '',
+        status: 'todo',
+        priority: 'normal',
+        assigneeId: null,
+      });
+      await services.tasks.change(userId, task.id, {
+        baseVersion: task.version,
+        status: 'done',
+        beforeTaskId: last.id,
+      });
+      middle.push(task.id);
+    }
+    const tasks = await services.tasks.list(userId, board.id);
+    expect(tasks.map((task) => task.id)).toEqual([
+      first.id,
+      ...middle,
+      last.id,
+    ]);
+    for (const task of tasks)
+      expect(task.position.split('.')[1]?.length ?? 0).toBeLessThanOrEqual(30);
+    // Renumbering moves neighbours without bumping their versions.
+    expect(tasks.find((task) => task.id === last.id)!.version).toBe(1);
+  });
+
+  it('only spends the login budget on failed attempts', async () => {
+    const email = `limit-${randomUUID()}@example.com`;
+    await services.auth.register({
+      email,
+      password: 'correct-horse-battery',
+      name: 'Limit',
+      workspaceName: '限流空间',
+    });
+    const ip = `198.51.100.${Math.floor(Math.random() * 200)}-${randomUUID()}`;
+    for (let index = 0; index < 25; index += 1)
+      await services.auth.loginWithinLimit(ip, {
+        email,
+        password: 'correct-horse-battery',
+      });
+    for (let index = 0; index < 20; index += 1)
+      await expect(
+        services.auth.loginWithinLimit(ip, {
+          email,
+          password: 'wrong-password-here',
+        }),
+      ).rejects.toMatchObject({ status: 401 });
+    await expect(
+      services.auth.loginWithinLimit(ip, {
+        email,
+        password: 'correct-horse-battery',
+      }),
+    ).rejects.toMatchObject({ status: 429 });
+  });
+
   it('allows one-level replies only and limits deletes to authors', async () => {
     const task = await services.tasks.create(userId, projectId, {
       title: '评论任务',
