@@ -105,7 +105,11 @@ export async function record(
   );
 }
 
+// Repeated midpoints keep adding digits; past this scale the column is renumbered.
+const maxPositionScale = 30;
+
 // Exact numeric midpoints preserve order without rewriting unrelated tasks or their versions.
+// Callers hold the project lock, so renumbering a column cannot race another board write.
 export async function positionBefore(
   client: PoolClient,
   projectId: string,
@@ -127,12 +131,25 @@ export async function positionBefore(
     throw new ApiError(400, '目标任务不在当前项目的目标列中，请刷新看板。');
   const previous = ordered.rows[index - 1]?.position;
   const next = ordered.rows[index]?.position;
-  const result = await client.query<{ position: string }>(
-    `SELECT CASE WHEN $2::numeric IS NULL THEN COALESCE($1::numeric,0) + 1024
-     WHEN $1::numeric IS NULL THEN $2::numeric - 1024 ELSE ($1::numeric + $2::numeric) * 0.5 END AS position`,
+  const result = await client.query<{ position: string; scale: number }>(
+    `SELECT p AS position, scale(p) AS scale FROM (SELECT CASE
+       WHEN $2::numeric IS NULL THEN COALESCE($1::numeric,0) + 1024
+       WHEN $1::numeric IS NULL THEN $2::numeric - 1024
+       ELSE ($1::numeric + $2::numeric) * 0.5 END AS p) AS midpoint`,
     [previous ?? null, next ?? null],
   );
-  return result.rows[0]!.position;
+  const { position, scale } = result.rows[0]!;
+  if (scale <= maxPositionScale) return position;
+  // Leave a whole step free before the insertion point; position is not part of a task's version.
+  await client.query(
+    `UPDATE tasks t SET position = ordered.rank * 1024
+     FROM (SELECT id, row_number() OVER (ORDER BY position, number)
+             + CASE WHEN row_number() OVER (ORDER BY position, number) > $4 THEN 1 ELSE 0 END AS rank
+           FROM tasks WHERE project_id = $1 AND status = $2 AND id <> $3) AS ordered
+     WHERE t.id = ordered.id`,
+    [projectId, status, taskId, index],
+  );
+  return String((index + 1) * 1024);
 }
 
 export async function insert(

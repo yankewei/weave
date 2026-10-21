@@ -20,7 +20,10 @@ export async function api<T>(
     credentials: 'same-origin',
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     headers: {
-      'Content-Type': 'application/json',
+      // The browser sets the multipart boundary for FormData itself.
+      ...(rest.body instanceof FormData
+        ? {}
+        : { 'Content-Type': 'application/json' }),
       'X-Weave-Request': '1',
       ...headers,
     },

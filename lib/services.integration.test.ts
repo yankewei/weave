@@ -9,6 +9,38 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 // Route handlers depend on the Next request context, so these tests exercise the
 // service layer that owns the transactions, SQL and permission rules.
 
+// Object stores are external; keep their contents in memory keyed by bucket.
+const objects = vi.hoisted(() => new Map<string, Uint8Array>());
+vi.mock('./object-storage', () => {
+  const where = (target: { bucket: string } | null, key: string) =>
+    `${target?.bucket ?? 'blob'}:${key}`;
+  return {
+    putObject: async (
+      target: { bucket: string } | null,
+      key: string,
+      bytes: Uint8Array,
+    ) => {
+      objects.set(where(target, key), bytes);
+    },
+    getObject: async (target: { bucket: string } | null, key: string) => {
+      const bytes = objects.get(where(target, key));
+      return bytes
+        ? new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(bytes);
+              controller.close();
+            },
+          })
+        : null;
+    },
+    deleteObject: async (target: { bucket: string } | null, key: string) => {
+      objects.delete(where(target, key));
+    },
+  };
+});
+
+const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
 type Services = {
   auth: typeof import('./auth');
   db: typeof import('./db');
@@ -18,6 +50,7 @@ type Services = {
   comments: typeof import('./services/comments');
   members: typeof import('./services/members');
   storage: typeof import('./services/storage');
+  uploads: typeof import('./services/uploads');
 };
 
 let database: EmbeddedPostgres;
@@ -65,6 +98,7 @@ beforeAll(async () => {
     comments: await import('./services/comments'),
     members: await import('./services/members'),
     storage: await import('./services/storage'),
+    uploads: await import('./services/uploads'),
   };
 }, 120_000);
 
@@ -168,6 +202,80 @@ describe('services', () => {
     expect(history).toHaveLength(2);
   });
 
+  it('renumbers a column instead of growing positions without bound', async () => {
+    const board = await services.workspaces.createProject(userId, workspaceId, {
+      name: '排序项目',
+    });
+    const add = (title: string) =>
+      services.tasks.create(userId, board.id, {
+        title,
+        description: '',
+        acceptanceCriteria: '',
+        status: 'done',
+        priority: 'normal',
+        assigneeId: null,
+      });
+    const first = await add('首');
+    const last = await add('尾');
+    const middle: string[] = [];
+    // Each move lands right before the last task, halving the same gap every time.
+    for (let index = 0; index < 40; index += 1) {
+      const task = await services.tasks.create(userId, board.id, {
+        title: `中${index}`,
+        description: '',
+        acceptanceCriteria: '',
+        status: 'todo',
+        priority: 'normal',
+        assigneeId: null,
+      });
+      await services.tasks.change(userId, task.id, {
+        baseVersion: task.version,
+        status: 'done',
+        beforeTaskId: last.id,
+      });
+      middle.push(task.id);
+    }
+    const tasks = await services.tasks.list(userId, board.id);
+    expect(tasks.map((task) => task.id)).toEqual([
+      first.id,
+      ...middle,
+      last.id,
+    ]);
+    for (const task of tasks)
+      expect(task.position.split('.')[1]?.length ?? 0).toBeLessThanOrEqual(30);
+    // Renumbering moves neighbours without bumping their versions.
+    expect(tasks.find((task) => task.id === last.id)!.version).toBe(1);
+  });
+
+  it('only spends the login budget on failed attempts', async () => {
+    const email = `limit-${randomUUID()}@example.com`;
+    await services.auth.register({
+      email,
+      password: 'correct-horse-battery',
+      name: 'Limit',
+      workspaceName: '限流空间',
+    });
+    const ip = `198.51.100.${Math.floor(Math.random() * 200)}-${randomUUID()}`;
+    for (let index = 0; index < 25; index += 1)
+      await services.auth.loginWithinLimit(ip, {
+        email,
+        password: 'correct-horse-battery',
+      });
+    for (let index = 0; index < 20; index += 1)
+      await expect(
+        services.auth.loginWithinLimit(ip, {
+          email,
+          password: 'wrong-password-here',
+        }),
+      ).rejects.toMatchObject({ status: 401 });
+    await expect(
+      services.auth.loginWithinLimit(ip, {
+        email,
+        password: 'correct-horse-battery',
+      }),
+    ).rejects.toMatchObject({ status: 429 });
+  });
+
   it('allows one-level replies only and limits deletes to authors', async () => {
     const task = await services.tasks.create(userId, projectId, {
       title: '评论任务',
@@ -253,30 +361,104 @@ describe('services', () => {
     ).rejects.toMatchObject({ status: 409 });
   });
 
-  it('keeps storage secrets encrypted and hides them from responses', async () => {
-    const saved = await services.storage.saveOwn(userId, {
+  it('uploads images to Vercel Blob by default and serves them to members only', async () => {
+    const uploaded = await services.uploads.create(userId, projectId, {
+      name: 'shot[1].png',
+      bytes: png,
+    });
+    expect(uploaded.url).toBe(`/api/uploads/${uploaded.id}`);
+    expect(uploaded.fileName).toBe('shot1.png');
+    expect([...objects.keys()]).toContain(
+      `blob:weave/${workspaceId}/${uploaded.id}.png`,
+    );
+
+    const opened = await services.uploads.open(userId, uploaded.id);
+    expect(opened.contentType).toBe('image/png');
+    expect(opened.size).toBe(png.length);
+
+    const outsider = await services.auth.register({
+      email: `outsider-${randomUUID()}@example.com`,
+      password: 'correct-horse-battery',
+      name: 'Outsider',
+      workspaceName: '外部空间',
+    });
+    await expect(
+      services.uploads.open(outsider.user.id, uploaded.id),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      services.uploads.create(outsider.user.id, projectId, {
+        name: 'a.png',
+        bytes: png,
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+
+    // SVG and other declared-as-image bytes are rejected by content, not name.
+    await expect(
+      services.uploads.create(userId, projectId, {
+        name: 'x.png',
+        bytes: new TextEncoder().encode('<svg onload="alert(1)"/>'),
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('lets admins switch a workspace to its own S3 and back', async () => {
+    const invitee = await services.auth.register({
+      email: `storage-${randomUUID()}@example.com`,
+      password: 'correct-horse-battery',
+      name: 'Storage member',
+      workspaceName: '存储成员空间',
+    });
+    await services.members.invite(userId, workspaceId, invitee.user.email);
+    const input = {
       endpoint: 'https://s3.example.com',
       region: 'auto',
       bucket: 'weave-bucket',
-      prefix: 'weave',
+      prefix: 'images',
       accessKeyId: 'AKIAEXAMPLE',
       secretAccessKey: 'super-secret-value',
-    });
-    expect(saved.storage?.accessKeyId).toBe('AKIAEXAMPLE');
+    };
+    await expect(
+      services.storage.save(invitee.user.id, workspaceId, input),
+    ).rejects.toMatchObject({ status: 403 });
 
+    const saved = await services.storage.save(userId, workspaceId, input);
+    expect(saved.storage).toEqual({
+      endpoint: 'https://s3.example.com',
+      region: 'auto',
+      bucket: 'weave-bucket',
+      prefix: 'images',
+      accessKeyId: 'AKIAEXAMPLE',
+    });
     const row = await services.db.transaction((client) =>
       client.query<{ secret: string }>(
-        'SELECT secret_access_key AS secret FROM user_storage WHERE user_id = $1',
-        [userId],
+        'SELECT secret_access_key AS secret FROM workspace_storage WHERE workspace_id = $1',
+        [workspaceId],
       ),
     );
     expect(row.rows[0]!.secret.startsWith('v1.')).toBe(true);
 
-    const own = await services.storage.readOwn(userId);
-    expect(own.storage).not.toHaveProperty('secretAccessKey');
+    // Leaving the secret blank keeps the saved one.
+    const kept = await services.storage.save(userId, workspaceId, {
+      ...input,
+      secretAccessKey: undefined,
+    });
+    expect(kept.storage?.bucket).toBe('weave-bucket');
 
-    const shortcut = await services.storage.useAdmin(userId, workspaceId);
-    expect(shortcut.shortcut?.userId).toBe(userId);
-    expect(shortcut.storage?.accessKeyId).toBe('AKIAEXAMPLE');
+    const uploaded = await services.uploads.create(invitee.user.id, projectId, {
+      name: 'a.png',
+      bytes: png,
+    });
+    expect([...objects.keys()]).toContain(
+      `weave-bucket:images/weave/${workspaceId}/${uploaded.id}.png`,
+    );
+    await expect(
+      services.uploads.open(userId, uploaded.id),
+    ).resolves.toMatchObject({ contentType: 'image/png' });
+
+    const cleared = await services.storage.clear(userId, workspaceId);
+    expect(cleared.storage).toBeNull();
+    await expect(
+      services.uploads.open(userId, uploaded.id),
+    ).rejects.toMatchObject({ status: 404 });
   });
 });

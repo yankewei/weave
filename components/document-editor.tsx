@@ -1,13 +1,21 @@
 'use client';
 
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { diffLines } from 'diff';
-import { documentSchema, revisionSchema, type Document } from '@/lib/contracts';
+import {
+  documentSchema,
+  imageUploadMaxBytes,
+  imageUploadTypes,
+  revisionSchema,
+  uploadSchema,
+  type Document,
+} from '@/lib/contracts';
 import { api, ApiError } from '@/lib/api';
 import {
   AlertCircleIcon,
   CheckIcon,
   HistoryIcon,
+  ImageIcon,
   RotateCcwIcon,
   SaveIcon,
 } from 'lucide-react';
@@ -61,6 +69,10 @@ export function DocumentEditor({
   const [notice, setNotice] = useState('');
   const [conflict, setConflict] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const { confirm, confirmationDialog } = useConfirmation();
   const dirty = title !== document.title || body !== document.body;
   const selected =
@@ -144,6 +156,44 @@ export function DocumentEditor({
     } finally {
       setBusy(false);
       onBusyChange(false);
+    }
+  }
+
+  // Each image is linked at the caret as soon as it lands, so a later failure keeps earlier ones.
+  async function upload(files: File[]) {
+    const images = files.filter((file) => file.type.startsWith('image/'));
+    if (images.length === 0) return;
+    const tooLarge = images.find((file) => file.size > imageUploadMaxBytes);
+    if (tooLarge) {
+      setUploadError(`${tooLarge.name} 超过 4 MB，没有上传。`);
+      return;
+    }
+    let at = bodyRef.current?.selectionEnd ?? body.length;
+    setUploading(true);
+    setUploadError('');
+    try {
+      for (const file of images) {
+        const form = new FormData();
+        form.append('file', file);
+        const uploaded = await api(
+          `/projects/${document.projectId}/uploads`,
+          uploadSchema,
+          { method: 'POST', body: form, timeoutMs: 60_000 },
+        );
+        const link = `![${uploaded.fileName}](${uploaded.url})\n`;
+        const position = at;
+        setBody(
+          (current) =>
+            current.slice(0, position) + link + current.slice(position),
+        );
+        at += link.length;
+      }
+    } catch (error) {
+      setUploadError(
+        error instanceof Error ? error.message : '图片上传失败，请重试。',
+      );
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -247,7 +297,9 @@ export function DocumentEditor({
               </span>
               <Button
                 type="submit"
-                disabled={busy || navigationBusy || !dirty || conflict}
+                disabled={
+                  busy || navigationBusy || uploading || !dirty || conflict
+                }
               >
                 {busy ? (
                   <Spinner data-icon="inline-start" />
@@ -284,6 +336,13 @@ export function DocumentEditor({
                 </AlertDescription>
               </Alert>
             )}
+            {uploadError && (
+              <Alert variant="destructive">
+                <AlertCircleIcon />
+                <AlertTitle>图片上传失败</AlertTitle>
+                <AlertDescription>{uploadError}</AlertDescription>
+              </Alert>
+            )}
             {notice && !dirty && (
               <Alert role="status">
                 <CheckIcon />
@@ -305,21 +364,69 @@ export function DocumentEditor({
               <Field data-disabled={busy || navigationBusy}>
                 <div className="flex items-center justify-between gap-3">
                   <FieldLabel htmlFor="document-body">文档正文</FieldLabel>
-                  <Badge variant="secondary">Markdown</Badge>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={busy || navigationBusy || uploading}
+                      onClick={() => fileRef.current?.click()}
+                    >
+                      {uploading ? (
+                        <Spinner data-icon="inline-start" />
+                      ) : (
+                        <ImageIcon data-icon="inline-start" />
+                      )}
+                      {uploading ? '正在上传…' : '插入图片'}
+                    </Button>
+                    <Badge variant="secondary">Markdown</Badge>
+                  </div>
                 </div>
+                <Input
+                  ref={fileRef}
+                  type="file"
+                  accept={imageUploadTypes.join(',')}
+                  multiple
+                  hidden
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files ?? []);
+                    event.target.value = '';
+                    void upload(files);
+                  }}
+                />
                 <Textarea
+                  ref={bodyRef}
                   id="document-body"
                   className="min-h-96 resize-y xl:min-h-[calc(100svh-22rem)]"
                   value={body}
                   onChange={(event) => setBody(event.target.value)}
+                  onPaste={(event) => {
+                    const files = Array.from(event.clipboardData.files);
+                    if (!files.some((file) => file.type.startsWith('image/')))
+                      return;
+                    event.preventDefault();
+                    void upload(files);
+                  }}
+                  onDragOver={(event) => {
+                    if (event.dataTransfer.types.includes('Files'))
+                      event.preventDefault();
+                  }}
+                  onDrop={(event) => {
+                    const files = Array.from(event.dataTransfer.files);
+                    if (files.length === 0) return;
+                    event.preventDefault();
+                    void upload(files);
+                  }}
                   maxLength={200_000}
                   placeholder="写下需求、方案或一个待讨论的问题…"
                   spellCheck={false}
-                  disabled={busy || navigationBusy}
+                  disabled={busy || navigationBusy || uploading}
                 />
                 <FieldDescription>
                   {body.length.toLocaleString()} 字符 ·
-                  每次正式保存都会留下可比较的版本。
+                  可以粘贴或拖入图片，只有工作空间成员能看到。每次正式保存都会留下可比较的版本。
                 </FieldDescription>
               </Field>
             </FieldGroup>

@@ -77,20 +77,35 @@ async function createSession(client: PoolClient, userId: string) {
   return token;
 }
 
-// Shared failure budget per IP; the digest keeps addresses out of the table.
+// Budget per IP; the digest keeps addresses out of the table. Every registration
+// spends it, so one address cannot mass-create accounts.
 export async function limitAttempts(ip: string) {
-  const key = digestToken(ip);
   const attempts = await transaction(async (client) => {
     await client.query('DELETE FROM auth_attempts WHERE resets_at < now()');
     const result = await client.query<{ attempts: number }>(
       `INSERT INTO auth_attempts(key, attempts, resets_at) VALUES($1, 1, now() + interval '15 minutes')
        ON CONFLICT(key) DO UPDATE SET attempts = auth_attempts.attempts + 1 RETURNING attempts`,
-      [key],
+      [digestToken(ip)],
     );
     return result.rows[0]!.attempts;
   });
   if (attempts > 20)
     throw new ApiError(429, '登录尝试过多，请 15 分钟后重试。');
+}
+
+// Each login reserves a slot up front so parallel guesses cannot slip past the
+// limit; a correct password hands the slot back, so only failures add up.
+export async function loginWithinLimit(
+  ip: string,
+  input: z.infer<typeof credentialsSchema>,
+) {
+  await limitAttempts(ip);
+  const result = await login(input);
+  await pool.query(
+    'UPDATE auth_attempts SET attempts = attempts - 1 WHERE key = $1 AND attempts > 0',
+    [digestToken(ip)],
+  );
+  return result;
 }
 
 export async function register(input: z.infer<typeof registerSchema>) {

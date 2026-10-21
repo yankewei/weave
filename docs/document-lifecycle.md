@@ -24,12 +24,11 @@
 | GET /api/workspaces/:id/members               | 当前成员，含姓名、邮箱与角色                   |
 | POST /api/workspaces/:id/members              | 管理员按邮箱邀请已注册用户，角色为成员         |
 | DELETE /api/workspaces/:id/members/:userId    | 管理员移除成员，或成员退出自己                 |
-| GET /api/account/storage                      | 当前账号的对象存储，不含访问密钥               |
-| PUT /api/account/storage                      | 保存当前账号的对象存储                         |
-| GET /api/workspaces/:id/storage               | 当前工作空间的有效对象存储，不含访问密钥       |
-| PUT /api/workspaces/:id/storage               | 管理员保存工作空间自己的对象存储               |
-| PUT /api/workspaces/:id/storage/shortcut      | 管理员把工作空间指向自己的存储配置             |
-| DELETE /api/workspaces/:id/storage/shortcut   | 管理员取消这个快捷方式                         |
+| GET /api/workspaces/:id/storage               | 管理员查看工作空间的 S3 存储，不含访问密钥     |
+| PUT /api/workspaces/:id/storage               | 管理员保存工作空间的 S3 存储                   |
+| DELETE /api/workspaces/:id/storage            | 管理员删除 S3 存储，改回默认 Vercel Blob       |
+| POST /api/projects/:id/uploads                | 上传图片，multipart 字段 file                  |
+| GET /api/uploads/:id                          | 读取图片，校验当前成员关系                     |
 | GET /api/tasks/:id/comments                   | 任务评论与回复，按创建时间排序                 |
 | POST /api/tasks/:id/comments                  | 发表评论，输入 body、可选 parentId             |
 | DELETE /api/tasks/:taskId/comments/:commentId | 作者删除自己的评论；一级评论删除时级联删除回复 |
@@ -46,7 +45,9 @@
 
 任务评论按当前成员关系校验，非成员返回 404。支持一级回复：回复一条回复返回 400「只能回复一级评论。」只有作者可以删除自己的评论；删除一级评论会通过数据库外键级联删除其回复。评论独立于 `task_events`，不写入不可变的任务变更历史。
 
-每个账号最多一份对象存储配置，响应不包含访问密钥。访问密钥使用 AES-256-GCM 加密后写入数据库，密钥来自服务端 `STORAGE_ENCRYPTION_KEY`；旧明文记录在下次保存时替换为密文。首次保存必须提供访问密钥；之后留空表示保留原密钥。每个工作空间最多一份对象存储：可以是自己的配置，也可以是指向某位管理员个人配置的快捷方式。快捷方式只记录管理员，不复制访问密钥；该管理员更新自己的配置后，工作空间读到的是新配置。非成员读取或保存工作空间存储返回 404，非管理员返回 403「只有管理员可以设置存储。」还没有个人配置时，快捷方式返回 400「请先保存你的存储配置。」该管理员离开工作空间后，快捷方式一并取消，个人配置仍留在账号上。
+图片上传只接受按文件头识别为 PNG、JPEG、GIF 或 WebP 的内容，单张不超过 4 MB，超出返回 413，其他内容返回 400。工作空间没有 S3 存储时写入私有 Vercel Blob（`BLOB_READ_WRITE_TOKEN`），否则写入该 S3，对象键为 `目录/weave/工作空间/图片.扩展名`。对象写入在事务外完成，随后在事务内重新校验项目权限并写入 `uploads`；登记失败时尽力删除刚写入的对象。读取时按当前成员关系校验，非成员返回 404，响应为 `private, max-age=300` 并带 `nosniff` 与沙箱 CSP。S3 图片按工作空间当前存储读取，改回默认存储后返回 404。
+
+每个工作空间最多一份 S3 存储，只有管理员可以查看和修改，非成员返回 404，成员返回 403「只有管理员可以设置存储。」访问密钥使用 AES-256-GCM 加密后写入数据库，密钥来自服务端 `STORAGE_ENCRYPTION_KEY`；响应不包含访问密钥。首次保存必须提供访问密钥，之后留空表示保留原密钥。
 
 ## 写入约束
 
@@ -72,4 +73,4 @@
 
 首版直接返回全部文档版本快照。大型文档、长历史场景应在后续改成分页摘要与按需读取快照。正文限制为 200,000 字符。前端提供 Markdown 源码编辑与逐行差异。文档地址是 `/workspaces/:workspaceId/projects/:projectId/documents/:documentId`。尚无 Markdown 渲染预览、多人实时协作或离线草稿。
 
-注册不验证邮箱归属，不支持密码重置。IP 限流在同一网络多人共享时会共同计数；部署到代理后需要另行设计可信代理配置和注册策略。此阶段不把本地开发配置视为生产发布方案。
+注册不验证邮箱归属，不支持密码重置。IP 限流在同一网络多人共享时会共同计数，只有失败的登录与每次注册会占用额度。来源地址按 `TRUSTED_PROXY_HOPS`（默认 1）从 `X-Forwarded-For` 右侧选取；应用直接暴露在公网、前面没有代理时，这个头可以被伪造，生产环境应部署在 Vercel 或反向代理之后。此阶段不把本地开发配置视为生产发布方案。
