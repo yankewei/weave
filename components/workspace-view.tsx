@@ -20,6 +20,7 @@ import {
   AlertCircleIcon,
   FileTextIcon,
   FolderIcon,
+  LayoutDashboardIcon,
   PlusIcon,
   SparklesIcon,
   KanbanIcon,
@@ -38,6 +39,7 @@ import {
   TaskConversation,
   type TaskConversationHandle,
 } from '@/components/task-conversation';
+import { Workbench } from '@/components/workbench';
 import { WorkspaceSettings } from '@/components/workspace-settings';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -90,6 +92,8 @@ export function WorkspaceView({
   const user = useCurrentUser();
   const board = view === 'board';
   const settings = view === 'settings';
+  // The project home is the workbench: it scrolls as a page instead of filling the viewport.
+  const workbench = Boolean(projectId) && !board && !settings && !documentId;
   const [chatOpen, setChatOpen] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [documentList, setDocumentList] = useState<{
@@ -351,8 +355,8 @@ export function WorkspaceView({
                     aria-describedby="ai-nav-status"
                     onClick={openConversation}
                   >
-                    <SparklesIcon />
-                    <span>AI 对话</span>
+                    <LayoutDashboardIcon />
+                    <span>工作台</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
@@ -509,7 +513,8 @@ export function WorkspaceView({
       <SidebarInset
         className={cn(
           'min-w-0',
-          !documentId && 'h-[calc(100svh-4rem)] overflow-hidden',
+          !documentId && 'h-[calc(100svh-4rem)]',
+          !documentId && (workbench ? 'overflow-y-auto' : 'overflow-hidden'),
         )}
       >
         {error && !creation && (
@@ -584,16 +589,27 @@ export function WorkspaceView({
             </div>
           )
         ) : projectId ? (
-          <TaskConversation
-            ref={conversationRef}
+          <Workbench
             key={projectId}
-            placement="page"
+            workspaceId={workspaceId}
             projectId={projectId}
             projectName={
               projects.find((project) => project.id === projectId)?.name ??
               '项目'
             }
+            user={user}
+            conversationRef={conversationRef}
             onOpenBoard={openBoard}
+            onOpenProject={(id) => {
+              setError('');
+              void guard(`/workspaces/${workspaceId}/projects/${id}`);
+            }}
+            onOpenDocument={(id, documentId) => {
+              setError('');
+              void guard(
+                `/workspaces/${workspaceId}/projects/${id}/documents/${documentId}`,
+              );
+            }}
           />
         ) : (
           <section

@@ -461,4 +461,133 @@ describe('services', () => {
       services.uploads.open(userId, uploaded.id),
     ).rejects.toMatchObject({ status: 404 });
   });
+
+  it('summarises a workspace for the workbench without leaking other workspaces', async () => {
+    const owner = await services.auth.register({
+      email: `bench-${randomUUID()}@example.com`,
+      password: 'correct-horse-battery',
+      name: 'Bench owner',
+      workspaceName: '工作台空间',
+    });
+    const benchWorkspace = (
+      await services.workspaces.listWorkspaces(owner.user.id)
+    )[0]!.id;
+    const project = await services.workspaces.createProject(
+      owner.user.id,
+      benchWorkspace,
+      { name: '工作台项目' },
+    );
+    const base = {
+      description: '',
+      acceptanceCriteria: '',
+      priority: 'normal' as const,
+      assigneeId: null,
+    };
+    const first = await services.tasks.create(owner.user.id, project.id, {
+      ...base,
+      title: '待办任务',
+      status: 'todo',
+    });
+    await services.tasks.create(owner.user.id, project.id, {
+      ...base,
+      title: '已完成任务',
+      status: 'done',
+    });
+    await services.tasks.change(owner.user.id, first.id, {
+      baseVersion: 1,
+      status: 'in_progress',
+      beforeTaskId: null,
+    });
+    const document = await services.documents.create(
+      owner.user.id,
+      project.id,
+      { title: '方案', body: '' },
+    );
+
+    // A pending proposal counts only for the person who can resolve it.
+    await services.db.transaction(async (client) => {
+      const conversationId = randomUUID();
+      const messageId = randomUUID();
+      const runId = randomUUID();
+      await client.query(
+        'INSERT INTO conversations(id, workspace_id, project_id, created_by) VALUES($1,$2,$3,$4)',
+        [conversationId, benchWorkspace, project.id, owner.user.id],
+      );
+      await client.query(
+        `INSERT INTO messages(id, conversation_id, workspace_id, author_type, author_id, body)
+         VALUES($1,$2,$3,'user',$4,'拆一下')`,
+        [messageId, conversationId, benchWorkspace, owner.user.id],
+      );
+      await client.query(
+        `INSERT INTO ai_runs(id, workspace_id, conversation_id, trigger_message_id, initiator_id, status, model, finished_at)
+         VALUES($1,$2,$3,$4,$5,'succeeded','test',now())`,
+        [runId, benchWorkspace, conversationId, messageId, owner.user.id],
+      );
+      await client.query(
+        `INSERT INTO change_proposals(id, workspace_id, project_id, conversation_id, ai_run_id, initiator_id, status, summary)
+         VALUES($1,$2,$3,$4,$5,$6,'pending','提案')`,
+        [
+          randomUUID(),
+          benchWorkspace,
+          project.id,
+          conversationId,
+          runId,
+          owner.user.id,
+        ],
+      );
+    });
+
+    const summary = await services.workspaces.overview(
+      owner.user.id,
+      benchWorkspace,
+    );
+    expect(summary.projects).toEqual([
+      {
+        id: project.id,
+        name: '工作台项目',
+        todo: 0,
+        inProgress: 1,
+        done: 1,
+        documents: 1,
+        pendingProposals: 1,
+      },
+    ]);
+    expect(summary.documents.map((item) => item.id)).toEqual([document.id]);
+    expect(summary.activity[0]).toMatchObject({
+      kind: 'document',
+      action: 'create',
+      targetId: document.id,
+    });
+    expect(summary.activity[1]).toMatchObject({
+      kind: 'task',
+      action: 'move',
+      targetId: first.id,
+      taskNumber: 1,
+      taskStatus: 'in_progress',
+      fromProposal: false,
+      actorName: 'Bench owner',
+    });
+    expect(summary.activity).toHaveLength(4);
+
+    const colleague = await services.auth.register({
+      email: `bench-member-${randomUUID()}@example.com`,
+      password: 'correct-horse-battery',
+      name: 'Bench member',
+      workspaceName: '同事空间',
+    });
+    await services.members.invite(
+      owner.user.id,
+      benchWorkspace,
+      colleague.user.email,
+    );
+    const seenByColleague = await services.workspaces.overview(
+      colleague.user.id,
+      benchWorkspace,
+    );
+    expect(seenByColleague.projects[0]!.pendingProposals).toBe(0);
+
+    await expect(
+      services.workspaces.overview(owner.user.id, workspaceId),
+    ).rejects.toMatchObject({ status: 404 });
+  });
 });
