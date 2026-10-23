@@ -289,3 +289,45 @@ export const conversationStateSchema = z.object({
 });
 export type Conversation = z.infer<typeof conversationSchema>;
 export type Proposal = z.infer<typeof proposalSchema>;
+
+export const workspaceOverviewSchema = z.object({
+  projects: z.array(
+    z.object({
+      id: z.uuid(),
+      name: z.string(),
+      todo: z.number().int().nonnegative(),
+      inProgress: z.number().int().nonnegative(),
+      done: z.number().int().nonnegative(),
+      documents: z.number().int().nonnegative(),
+      pendingProposals: z.number().int().nonnegative(),
+    }),
+  ),
+  documents: z.array(
+    z.object({
+      id: z.uuid(),
+      projectId: z.uuid(),
+      projectName: z.string(),
+      title: z.string(),
+      version: z.number().int().positive(),
+      updatedAt: z.string(),
+      updatedByName: z.string(),
+    }),
+  ),
+  activity: z.array(
+    z.object({
+      id: z.uuid(),
+      kind: z.enum(['task', 'document']),
+      action: z.enum(['create', 'edit', 'move', 'restore']),
+      projectId: z.uuid(),
+      projectName: z.string(),
+      targetId: z.uuid(),
+      title: z.string(),
+      taskNumber: z.number().int().positive().nullable(),
+      taskStatus: taskStatusSchema.nullable(),
+      fromProposal: z.boolean(),
+      actorName: z.string(),
+      createdAt: z.string(),
+    }),
+  ),
+});
+export type WorkspaceOverview = z.infer<typeof workspaceOverviewSchema>;

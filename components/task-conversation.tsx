@@ -65,12 +65,15 @@ export const TaskConversation = forwardRef(function TaskConversation(
     placement = 'sidebar',
     onOpenBoard,
     onMinimize,
+    onStateChange,
   }: {
     projectId: string;
     projectName: string;
     placement?: 'page' | 'sidebar';
     onOpenBoard: () => void;
     onMinimize?: () => void;
+    // Called after a proposal is created, confirmed or rejected.
+    onStateChange?: () => void;
   },
   ref: Ref<TaskConversationHandle>,
 ) {
@@ -131,6 +134,7 @@ export const TaskConversation = forwardRef(function TaskConversation(
           }),
         );
         setConversation(state.conversation);
+        onStateChange?.();
         setPendingUser('');
         setStreamReply('');
         setDraft('');
@@ -142,7 +146,7 @@ export const TaskConversation = forwardRef(function TaskConversation(
         if (!abort.signal.aborted) setSending(false);
       }
     },
-    [busy, loading, pending, projectId],
+    [busy, loading, onStateChange, pending, projectId],
   );
 
   useImperativeHandle(
@@ -182,6 +186,7 @@ export const TaskConversation = forwardRef(function TaskConversation(
         ),
       );
       setConversation(state.conversation);
+      onStateChange?.();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '处理提案失败。');
     } finally {
