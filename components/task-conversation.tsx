@@ -10,7 +10,12 @@ import {
   type Ref,
 } from 'react';
 import { conversationStateSchema, type Conversation } from '@/lib/contracts';
-import { SparklesIcon } from 'lucide-react';
+import {
+  FileTextIcon,
+  KanbanIcon,
+  SearchIcon,
+  SparklesIcon,
+} from 'lucide-react';
 import { api, apiEventStream } from '@/lib/api';
 import {
   ConversationStarterCards,
@@ -66,11 +71,13 @@ export const TaskConversation = forwardRef(function TaskConversation(
     onOpenBoard,
     onMinimize,
     onStateChange,
+    onOpenDocument,
   }: {
     projectId: string;
     projectName: string;
     placement?: 'page' | 'sidebar';
     onOpenBoard: () => void;
+    onOpenDocument: (documentId: string) => void;
     onMinimize?: () => void;
     // Called after a proposal is created, confirmed or rejected.
     onStateChange?: () => void;
@@ -83,6 +90,7 @@ export const TaskConversation = forwardRef(function TaskConversation(
   const [draft, setDraft] = useState('');
   const [pendingUser, setPendingUser] = useState('');
   const [streamReply, setStreamReply] = useState('');
+  const [liveLookups, setLiveLookups] = useState<string[]>([]);
   const [resolving, setResolving] = useState(false);
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);
@@ -117,12 +125,13 @@ export const TaskConversation = forwardRef(function TaskConversation(
   const submitBody = useCallback(
     async (body: string) => {
       const trimmed = body.trim();
-      if (!trimmed || busy || pending || loading) return;
+      if (!trimmed || busy || loading) return;
       const abort = new AbortController();
       sendAbort.current = abort;
       setSending(true);
       setPendingUser(trimmed);
       setStreamReply('');
+      setLiveLookups([]);
       setError('');
       try {
         const state = conversationStateSchema.parse(
@@ -131,6 +140,8 @@ export const TaskConversation = forwardRef(function TaskConversation(
             timeoutMs: 70_000,
             signal: abort.signal,
             onReply: setStreamReply,
+            onLookup: (summary) =>
+              setLiveLookups((current) => [...current, summary]),
           }),
         );
         setConversation(state.conversation);
@@ -146,7 +157,7 @@ export const TaskConversation = forwardRef(function TaskConversation(
         if (!abort.signal.aborted) setSending(false);
       }
     },
-    [busy, loading, onStateChange, pending, projectId],
+    [busy, loading, onStateChange, projectId],
   );
 
   useImperativeHandle(
@@ -338,6 +349,45 @@ export const TaskConversation = forwardRef(function TaskConversation(
                           >
                             <BubbleContent>{message.body}</BubbleContent>
                           </Bubble>
+                          {message.lookups.length ? (
+                            <Marker>
+                              <SearchIcon />
+                              <MarkerContent>
+                                查阅：{message.lookups.join('；')}
+                              </MarkerContent>
+                            </Marker>
+                          ) : null}
+                          {message.sources.length ? (
+                            <ul
+                              className="flex flex-wrap gap-1"
+                              aria-label="回答依据"
+                            >
+                              {message.sources.map((source) => (
+                                <li key={source.id} className="max-w-full">
+                                  <Button
+                                    variant="outline"
+                                    size="xs"
+                                    className="max-w-full"
+                                    onClick={() => {
+                                      if (source.type === 'task') onOpenBoard();
+                                      else onOpenDocument(source.id);
+                                    }}
+                                  >
+                                    {source.type === 'task' ? (
+                                      <KanbanIcon data-icon="inline-start" />
+                                    ) : (
+                                      <FileTextIcon data-icon="inline-start" />
+                                    )}
+                                    <span className="truncate">
+                                      {source.type === 'task'
+                                        ? `WV-${source.number} ${source.title}`
+                                        : `《${source.title}》v${source.version}`}
+                                    </span>
+                                  </Button>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
                         </MessageContent>
                       </Message>
                     </MessageScrollerItem>
@@ -443,9 +493,15 @@ export const TaskConversation = forwardRef(function TaskConversation(
                               <BubbleContent>{streamReply}</BubbleContent>
                             </Bubble>
                           ) : null}
+                          {liveLookups.map((summary, index) => (
+                            <Marker key={index}>
+                              <SearchIcon />
+                              <MarkerContent>{summary}</MarkerContent>
+                            </Marker>
+                          ))}
                           <Marker>
                             <MarkerContent>
-                              正在生成提案，任务尚未创建。
+                              正在查找资料并生成回复，任务尚未创建。
                             </MarkerContent>
                           </Marker>
                         </MessageContent>

@@ -51,6 +51,7 @@ export async function apiEventStream(
     timeoutMs?: number;
     signal?: AbortSignal;
     onReply: (reply: string) => void;
+    onLookup?: (summary: string) => void;
   },
 ): Promise<unknown> {
   const timeout = AbortSignal.timeout(options.timeoutMs ?? 70_000);
@@ -94,10 +95,13 @@ export async function apiEventStream(
     if (!event || !dataLine) return;
     const data = JSON.parse(dataLine) as {
       reply?: unknown;
+      summary?: unknown;
       message?: unknown;
     };
     if (event === 'reply' && typeof data.reply === 'string')
       options.onReply(data.reply);
+    if (event === 'lookup' && typeof data.summary === 'string')
+      options.onLookup?.(data.summary);
     if (event === 'done') donePayload = data;
     if (event === 'error') {
       throw new ApiError(

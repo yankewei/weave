@@ -57,6 +57,7 @@ export const POST = handler<{ projectId: string }>(
           input.body,
           (reply) => emit('reply', { reply }),
           abort.signal,
+          (summary) => emit('lookup', { summary }),
         );
         if (result) emit('done', result);
         settle('done');

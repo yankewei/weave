@@ -1,28 +1,46 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { APICallError, NoOutputGeneratedError, Output, streamText } from 'ai';
+import {
+  APICallError,
+  NoOutputGeneratedError,
+  Output,
+  stepCountIs,
+  streamText,
+  type ToolSet,
+} from 'ai';
 import { z } from 'zod';
 import { taskPrioritySchema } from '@/lib/contracts';
 import { ApiError } from '../http';
 
-export const taskProposalDraftSchema = z
+const proposedTaskSchema = z
   .object({
-    reply: z.string().trim().min(1).max(4_000),
-    tasks: z
-      .array(
-        z
-          .object({
-            title: z.string().trim().min(1).max(200),
-            description: z.string().trim().max(20_000),
-            acceptanceCriteria: z.string().trim().max(20_000),
-            priority: taskPrioritySchema,
-          })
-          .strict(),
-      )
-      .max(8),
+    title: z.string().trim().min(1).max(200),
+    description: z.string().trim().max(20_000),
+    acceptanceCriteria: z.string().trim().max(20_000),
+    priority: taskPrioritySchema,
   })
   .strict();
 
-export type TaskProposalDraft = z.infer<typeof taskProposalDraftSchema>;
+// Flat rather than a union so providers with strict JSON schema accept it.
+const citedSourceSchema = z
+  .object({
+    type: z.enum(['task', 'document']),
+    taskNumber: z.number().int().positive().nullable(),
+    documentId: z.string().nullable(),
+  })
+  .strict();
+
+// While a proposal waits for the user, the model may answer but not propose.
+export function proposalDraftSchema(allowTasks: boolean) {
+  return z
+    .object({
+      reply: z.string().trim().min(1).max(4_000),
+      tasks: z.array(proposedTaskSchema).max(allowTasks ? 8 : 0),
+      sources: z.array(citedSourceSchema).max(10),
+    })
+    .strict();
+}
+
+export type TaskProposalDraft = z.infer<ReturnType<typeof proposalDraftSchema>>;
 
 export const defaultCommandCodeModelId = 'deepseek/deepseek-v4.1-flash';
 
@@ -44,11 +62,19 @@ export function assertModelReady() {
   apiKey();
 }
 
+// Lookups plus the final structured answer; generating the answer is a step too.
+const maxSteps = 6;
+
 export async function streamProposal(
   messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
-  onReply: (reply: string) => void,
-  signal?: AbortSignal,
+  options: {
+    tools: ToolSet;
+    allowTasks: boolean;
+    onReply: (reply: string) => void;
+    signal?: AbortSignal;
+  },
 ): Promise<TaskProposalDraft> {
+  const { tools, allowTasks, onReply, signal } = options;
   const key = apiKey();
   const instructions = messages
     .filter((message) => message.role === 'system')
@@ -74,7 +100,9 @@ export async function streamProposal(
       maxRetries: 0,
       timeout: 55_000,
       ...(signal ? { abortSignal: signal } : {}),
-      output: Output.object({ schema: taskProposalDraftSchema }),
+      tools,
+      stopWhen: stepCountIs(maxSteps),
+      output: Output.object({ schema: proposalDraftSchema(allowTasks) }),
     });
     let latest = '';
     for await (const partial of result.partialOutputStream) {

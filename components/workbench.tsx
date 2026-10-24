@@ -132,6 +132,9 @@ export function Workbench({
             projectId={projectId}
             projectName={projectName}
             onOpenBoard={onOpenBoard}
+            onOpenDocument={(documentId) =>
+              onOpenDocument(projectId, documentId)
+            }
             onStateChange={refresh}
           />
         </Card>

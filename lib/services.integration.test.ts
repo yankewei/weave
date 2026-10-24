@@ -39,6 +39,54 @@ vi.mock('./object-storage', () => {
   };
 });
 
+// The model is external too: each entry is one streamed step, consumed in order.
+const model = vi.hoisted(() => ({ steps: [] as unknown[][], calls: 0 }));
+vi.mock('@ai-sdk/openai-compatible', async () => {
+  const { MockLanguageModelV4 } = await import('ai/test');
+  const { simulateReadableStream } = await import('ai');
+  return {
+    createOpenAICompatible: () => ({
+      chatModel: () =>
+        new MockLanguageModelV4({
+          doStream: async () => ({
+            stream: simulateReadableStream({
+              chunks: (model.steps[model.calls++] ?? []) as never[],
+            }),
+          }),
+        }),
+    }),
+  };
+});
+
+const usage = {
+  inputTokens: {
+    total: 1,
+    noCache: 1,
+    cacheRead: undefined,
+    cacheWrite: undefined,
+  },
+  outputTokens: { total: 1, text: 1, reasoning: undefined },
+};
+const toolCallStep = (toolName: string, input: unknown) => [
+  {
+    type: 'tool-call',
+    toolCallId: `call-${toolName}`,
+    toolName,
+    input: JSON.stringify(input),
+  },
+  {
+    type: 'finish',
+    finishReason: { unified: 'tool-calls', raw: undefined },
+    usage,
+  },
+];
+const answerStep = (answer: unknown) => [
+  { type: 'text-start', id: 'answer' },
+  { type: 'text-delta', id: 'answer', delta: JSON.stringify(answer) },
+  { type: 'text-end', id: 'answer' },
+  { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage },
+];
+
 const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 type Services = {
@@ -51,6 +99,8 @@ type Services = {
   members: typeof import('./services/members');
   storage: typeof import('./services/storage');
   uploads: typeof import('./services/uploads');
+  knowledge: typeof import('./services/knowledge');
+  conversations: typeof import('./services/conversations');
 };
 
 let database: EmbeddedPostgres;
@@ -86,6 +136,7 @@ beforeAll(async () => {
   await database.createDatabase('weave');
   process.env.DATABASE_URL = `postgres://weave:weave@127.0.0.1:${port}/weave`;
   process.env.STORAGE_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
+  process.env.CMD_API_KEY = 'test-key';
   vi.resetModules();
   const db = await import('./db');
   await migrate(db);
@@ -99,6 +150,8 @@ beforeAll(async () => {
     members: await import('./services/members'),
     storage: await import('./services/storage'),
     uploads: await import('./services/uploads'),
+    knowledge: await import('./services/knowledge'),
+    conversations: await import('./services/conversations'),
   };
 }, 120_000);
 
@@ -588,6 +641,250 @@ describe('services', () => {
 
     await expect(
       services.workspaces.overview(owner.user.id, workspaceId),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('lets the model look up tasks and documents inside one project only', async () => {
+    const owner = await services.auth.register({
+      email: `lookup-${randomUUID()}@example.com`,
+      password: 'correct-horse-battery',
+      name: '查阅人',
+      workspaceName: '查阅空间',
+    });
+    const space = (await services.workspaces.listWorkspaces(owner.user.id))[0]!
+      .id;
+    const project = await services.workspaces.createProject(
+      owner.user.id,
+      space,
+      {
+        name: '查阅项目',
+      },
+    );
+    const base = {
+      description: '',
+      acceptanceCriteria: '',
+      priority: 'normal' as const,
+      assigneeId: null,
+    };
+    const limited = await services.tasks.create(owner.user.id, project.id, {
+      ...base,
+      title: '登录限流',
+      description: '按账号和 IP 计数，100% 覆盖',
+      status: 'todo',
+      priority: 'high',
+      assigneeId: owner.user.id,
+    });
+    await services.tasks.create(owner.user.id, project.id, {
+      ...base,
+      title: '注册页面',
+      status: 'in_progress',
+    });
+    await services.tasks.change(owner.user.id, limited.id, {
+      baseVersion: 1,
+      status: 'in_progress',
+      beforeTaskId: null,
+    });
+    await services.comments.create(owner.user.id, limited.id, {
+      body: '先上灰度再全量',
+    });
+    const spec = await services.documents.create(owner.user.id, project.id, {
+      title: '账号需求',
+      body: '# 账号需求\n\n概述。\n\n## 登录\n\n失败 5 次触发限流。\n\n```\n# 不是标题\n```\n\n## 注册\n\n邮箱验证。',
+    });
+
+    const read = <T>(
+      lookup: (client: import('pg').PoolClient) => Promise<{ result: T }>,
+    ) =>
+      services.db.transaction(async (client) => (await lookup(client)).result);
+    const k = services.knowledge;
+
+    expect(
+      await read((client) =>
+        k.searchTasks(client, owner.user.id, project.id, {
+          query: null,
+          status: 'in_progress',
+          priority: 'high',
+          assignee: 'me',
+        }),
+      ),
+    ).toEqual([expect.objectContaining({ number: 'WV-1', title: '登录限流' })]);
+    // Comments count as matches; % is literal, not a wildcard.
+    expect(
+      await read((client) =>
+        k.searchTasks(client, owner.user.id, project.id, {
+          query: '灰度',
+          status: null,
+          priority: null,
+          assignee: null,
+        }),
+      ),
+    ).toHaveLength(1);
+    expect(
+      await read((client) =>
+        k.searchTasks(client, owner.user.id, project.id, {
+          query: '%',
+          status: null,
+          priority: null,
+          assignee: null,
+        }),
+      ),
+    ).toHaveLength(1);
+    expect(
+      await read((client) =>
+        k.searchTasks(client, owner.user.id, project.id, {
+          query: 'wv-2',
+          status: null,
+          priority: null,
+          assignee: null,
+        }),
+      ),
+    ).toEqual([expect.objectContaining({ title: '注册页面' })]);
+
+    const detail = (await read((client) =>
+      k.getTask(client, project.id, { number: 1 }),
+    )) as { comments: unknown[]; history: { change: string }[] };
+    expect(detail.comments).toEqual([
+      expect.objectContaining({ body: '先上灰度再全量', author: '查阅人' }),
+    ]);
+    expect(detail.history[0]!.change).toBe('状态：待办 → 进行中');
+
+    expect(await read((client) => k.listDocuments(client, project.id))).toEqual(
+      [
+        expect.objectContaining({
+          id: spec.id,
+          outline: ['账号需求', '登录', '注册'],
+        }),
+      ],
+    );
+    expect(
+      await read((client) =>
+        k.searchDocuments(client, project.id, { query: '限流' }),
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        id: spec.id,
+        matches: [expect.stringContaining('失败 5 次触发限流')],
+      }),
+    ]);
+    expect(
+      await read((client) =>
+        k.readDocument(client, project.id, {
+          id: spec.id,
+          section: '登录',
+          offset: null,
+        }),
+      ),
+    ).toMatchObject({
+      section: '登录',
+      content: '## 登录\n\n失败 5 次触发限流。\n\n```\n# 不是标题\n```\n\n',
+      nextOffset: null,
+    });
+    // A document from another project is not reachable by id.
+    expect(
+      await read((client) =>
+        k.readDocument(client, projectId, {
+          id: spec.id,
+          section: null,
+          offset: null,
+        }),
+      ),
+    ).toMatchObject({ error: expect.any(String) });
+
+    // A full turn: the model searches, answers, and cites one real and one made-up record.
+    model.calls = 0;
+    model.steps = [
+      toolCallStep('searchDocuments', { query: '限流' }),
+      answerStep({
+        reply: '登录失败 5 次会触发限流。',
+        tasks: [],
+        sources: [
+          { type: 'document', taskNumber: null, documentId: spec.id },
+          { type: 'task', taskNumber: 99, documentId: null },
+        ],
+      }),
+    ];
+    const lookups: string[] = [];
+    const state = await services.conversations.send(
+      owner.user.id,
+      project.id,
+      '登录限流是怎么定的？',
+      () => undefined,
+      undefined,
+      (summary) => lookups.push(summary),
+    );
+    expect(lookups).toEqual(['搜索文档「限流」，找到 1 篇']);
+    const answer = state!.conversation.messages.at(-1)!;
+    expect(answer).toMatchObject({
+      authorType: 'assistant',
+      body: '登录失败 5 次会触发限流。',
+      lookups: ['搜索文档「限流」，找到 1 篇'],
+      sources: [
+        { type: 'document', id: spec.id, title: '账号需求', version: 1 },
+      ],
+    });
+    expect(state!.conversation.proposal).toBeNull();
+
+    // A pending proposal still allows questions, but not a second proposal.
+    const task = {
+      title: '补充灰度开关',
+      description: '',
+      acceptanceCriteria: '可以按比例开启',
+      priority: 'normal',
+    };
+    model.calls = 0;
+    model.steps = [
+      answerStep({ reply: '拆好了。', tasks: [task], sources: [] }),
+    ];
+    const proposed = await services.conversations.send(
+      owner.user.id,
+      project.id,
+      '拆一下灰度',
+      () => undefined,
+    );
+    expect(proposed!.conversation.proposal?.status).toBe('pending');
+    model.calls = 0;
+    model.steps = [
+      answerStep({ reply: '目前有 2 个任务。', tasks: [], sources: [] }),
+    ];
+    const asked = await services.conversations.send(
+      owner.user.id,
+      project.id,
+      '现在有几个任务？',
+      () => undefined,
+    );
+    expect(asked!.conversation.messages.at(-1)!.body).toBe('目前有 2 个任务。');
+    model.calls = 0;
+    model.steps = [
+      answerStep({ reply: '再拆一份。', tasks: [task], sources: [] }),
+    ];
+    await expect(
+      services.conversations.send(
+        owner.user.id,
+        project.id,
+        '再拆一份',
+        () => undefined,
+      ),
+    ).rejects.toMatchObject({ status: 502 });
+    const proposals = await services.db.pool.query(
+      `SELECT count(*)::int AS count FROM change_proposals WHERE project_id = $1`,
+      [project.id],
+    );
+    expect(proposals.rows[0].count).toBe(1);
+
+    // An outsider's run cannot read this project.
+    const outsider = await services.auth.register({
+      email: `lookup-outsider-${randomUUID()}@example.com`,
+      password: 'correct-horse-battery',
+      name: '外人',
+      workspaceName: '外部',
+    });
+    await expect(
+      services.conversations.send(
+        outsider.user.id,
+        project.id,
+        '看看文档',
+        () => undefined,
+      ),
     ).rejects.toMatchObject({ status: 404 });
   });
 });

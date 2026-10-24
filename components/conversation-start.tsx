@@ -89,7 +89,8 @@ export function IdeaComposer({
   large?: boolean;
   bordered?: boolean;
 }) {
-  const locked = disabled || pending;
+  // A pending proposal still allows questions; the server just won't propose again.
+  const locked = disabled;
   return (
     <form
       className={cn('shrink-0', bordered && 'border-t px-4 py-4')}
@@ -100,7 +101,7 @@ export function IdeaComposer({
     >
       <FieldGroup>
         <Field data-disabled={locked}>
-          <FieldLabel htmlFor={id}>想做的事</FieldLabel>
+          <FieldLabel htmlFor={id}>提问或描述想做的事</FieldLabel>
           <Textarea
             id={id}
             name="body"
@@ -109,7 +110,9 @@ export function IdeaComposer({
             value={value}
             disabled={locked}
             placeholder={
-              pending ? '请先确认或拒绝当前提案' : '描述目标、约束和怎样算做完'
+              pending
+                ? '有提案等你确认，可以先继续提问'
+                : '例如：WV-14 进展如何？或者描述目标、约束和怎样算做完'
             }
             {...(large ? { className: 'min-h-40' } : {})}
             onChange={(event) => {

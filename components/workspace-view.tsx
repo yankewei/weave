@@ -734,6 +734,7 @@ export function WorkspaceView({
                 '项目'
               }
               onOpenBoard={openBoard}
+              onOpenDocument={openDocument}
               onMinimize={() => setChatOpen(false)}
             />
           </Card>

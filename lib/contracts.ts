@@ -255,12 +255,29 @@ export type MembershipChange = z.infer<typeof membershipChangeSchema>;
 export const conversationMessageInputSchema = z
   .object({ body: z.string().trim().min(1).max(8_000) })
   .strict();
+// A record an answer relied on, as it was when the answer was written.
+export const messageSourceSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('task'),
+    id: z.uuid(),
+    number: z.number().int().positive(),
+    title: z.string(),
+  }),
+  z.object({
+    type: z.literal('document'),
+    id: z.uuid(),
+    title: z.string(),
+    version: z.number().int().positive(),
+  }),
+]);
 export const conversationMessageSchema = z.object({
   id: z.uuid(),
   authorType: z.enum(['user', 'assistant']),
   authorName: z.string().nullable(),
   body: z.string(),
   createdAt: z.string(),
+  sources: z.array(messageSourceSchema),
+  lookups: z.array(z.string()),
 });
 export const proposalItemSchema = z.object({
   id: z.uuid(),
@@ -288,6 +305,7 @@ export const conversationStateSchema = z.object({
   conversation: conversationSchema.nullable(),
 });
 export type Conversation = z.infer<typeof conversationSchema>;
+export type MessageSource = z.infer<typeof messageSourceSchema>;
 export type Proposal = z.infer<typeof proposalSchema>;
 
 export const workspaceOverviewSchema = z.object({
