@@ -54,6 +54,8 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import { Textarea } from '@/components/ui/textarea';
+import { taskKey } from '@/lib/references';
+import { ReferencedKeys, ReferenceText } from '@/components/reference-text';
 
 export function TaskDetails({
   projectId,
@@ -193,7 +195,7 @@ export function TaskDetails({
         <SheetContent className="w-full sm:max-w-xl" showCloseButton={!busy}>
           <SheetHeader>
             <SheetTitle>
-              {task ? `WV-${task.number} · 任务详情` : '创建任务'}
+              {task ? `${taskKey(task.number)} · 任务详情` : '创建任务'}
             </SheetTitle>
             <SheetDescription>
               {task
@@ -320,6 +322,7 @@ export function TaskDetails({
                     disabled={busy}
                     placeholder="要解决什么问题？需要完成哪些工作？"
                   />
+                  <ReferencedKeys text={draft.description} />
                 </Field>
                 <Field data-disabled={busy}>
                   <FieldLabel htmlFor="task-acceptance">验收标准</FieldLabel>
@@ -337,6 +340,7 @@ export function TaskDetails({
                     disabled={busy}
                     placeholder="怎样判断这项任务已经完成？"
                   />
+                  <ReferencedKeys text={draft.acceptanceCriteria} />
                   <FieldDescription>
                     所有正式修改都会保留历史。对话创建的任务会标出来源提案。
                   </FieldDescription>
@@ -409,10 +413,17 @@ export function TaskDetails({
                                 </dt>
                                 <dd className="whitespace-pre-wrap wrap-anywhere">
                                   <span className="text-muted-foreground">
-                                    {taskHistoryValue(event.before, field)}
+                                    <ReferenceText
+                                      text={taskHistoryValue(
+                                        event.before,
+                                        field,
+                                      )}
+                                    />
                                   </span>
                                   {' → '}
-                                  {taskHistoryValue(event.after, field)}
+                                  <ReferenceText
+                                    text={taskHistoryValue(event.after, field)}
+                                  />
                                 </dd>
                               </div>
                             ))}

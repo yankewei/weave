@@ -10,6 +10,7 @@ import {
   type Document,
 } from '@/lib/contracts';
 import { api, ApiError } from '@/lib/api';
+import { documentKey } from '@/lib/references';
 import {
   AlertCircleIcon,
   CheckIcon,
@@ -311,6 +312,7 @@ export function DocumentEditor({
           <header className="flex min-h-20 flex-wrap items-center justify-between gap-4 px-6 py-4 sm:px-8">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span>{editing ? '正在编辑' : '文档'}</span>
+              <Badge variant="secondary">{documentKey(document.number)}</Badge>
               <Badge variant="outline">v{document.version}</Badge>
               <span>
                 更新于{' '}

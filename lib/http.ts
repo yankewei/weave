@@ -103,7 +103,7 @@ export async function body<T>(
   return schema.parse(payload);
 }
 
-const uuidPattern =
+export const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function uuid(value: string | undefined, label: string) {

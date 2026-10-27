@@ -13,7 +13,7 @@ import { transaction } from '../db';
 import { ApiError } from '../http';
 
 const documentColumns = `d.id, d.workspace_id AS "workspaceId", d.project_id AS "projectId",
-  d.title, d.body, d.version, d.updated_at AS "updatedAt"`;
+  d.number, d.title, d.body, d.version, d.updated_at AS "updatedAt"`;
 
 export async function requireProject(
   client: PoolClient,
@@ -100,13 +100,18 @@ export function create(
 ) {
   return transaction(async (client) => {
     const project = await requireProject(client, userId, projectId);
+    const counter = await client.query<{ number: number }>(
+      'UPDATE workspaces SET document_counter = document_counter + 1 WHERE id = $1 RETURNING document_counter AS number',
+      [project.workspaceId],
+    );
     const result = await client.query<Document>(
-      `INSERT INTO documents AS d(id, workspace_id, project_id, title, body, version, updated_by)
-       VALUES($1,$2,$3,$4,$5,1,$6) RETURNING ${documentColumns}`,
+      `INSERT INTO documents AS d(id, workspace_id, project_id, number, title, body, version, updated_by)
+       VALUES($1,$2,$3,$4,$5,$6,1,$7) RETURNING ${documentColumns}`,
       [
         randomUUID(),
         project.workspaceId,
         projectId,
+        counter.rows[0]!.number,
         input.title,
         input.body,
         userId,
@@ -171,7 +176,7 @@ export function list(userId: string, projectId: string) {
     return (
       await client.query(
         `SELECT d.id, d.workspace_id AS "workspaceId", d.project_id AS "projectId",
-      d.title, d.version, d.updated_at AS "updatedAt" FROM documents d WHERE d.project_id = $1 ORDER BY d.updated_at DESC, d.id`,
+      d.number, d.title, d.version, d.updated_at AS "updatedAt" FROM documents d WHERE d.project_id = $1 ORDER BY d.updated_at DESC, d.id`,
         [projectId],
       )
     ).rows;
