@@ -162,3 +162,99 @@
     @apply bg-diff-removed text-diff-removed-foreground;
   }
 }
+
+/* Rendered document bodies, shared by the reading view and the editor. */
+@layer components {
+  .document-content {
+    @apply text-sm leading-7 wrap-anywhere text-foreground;
+  }
+  .document-content > * + * {
+    @apply mt-3;
+  }
+  .document-content h1 {
+    @apply mt-8 text-lg font-semibold;
+  }
+  .document-content h2 {
+    @apply mt-6 text-base font-semibold;
+  }
+  .document-content h3 {
+    @apply mt-5 text-sm font-semibold;
+  }
+  .document-content > :first-child {
+    @apply mt-0;
+  }
+  .document-content a {
+    @apply text-primary underline underline-offset-4;
+  }
+  .document-content code {
+    @apply rounded-sm bg-muted px-1 py-0.5 font-mono text-[0.85em];
+  }
+  .document-content pre {
+    @apply overflow-x-auto rounded-lg border bg-muted/50 p-4 font-mono text-xs leading-6;
+  }
+  .document-content pre code {
+    @apply bg-transparent p-0 text-inherit;
+  }
+  .document-content blockquote {
+    @apply border-l-2 pl-4 text-muted-foreground;
+  }
+  .document-content ul {
+    @apply list-disc pl-6;
+  }
+  .document-content ol {
+    @apply list-decimal pl-6;
+  }
+  .document-content li > p {
+    @apply my-0;
+  }
+  .document-content ul[data-type='taskList'] {
+    @apply list-none pl-0;
+  }
+  .document-content ul[data-type='taskList'] li {
+    @apply flex items-start gap-2;
+  }
+  .document-content ul[data-type='taskList'] li > label {
+    @apply mt-1.5 flex shrink-0;
+  }
+  .document-content ul[data-type='taskList'] li > label input {
+    @apply size-4 accent-primary;
+  }
+  .document-content ul[data-type='taskList'] li > div {
+    @apply min-w-0 flex-1;
+  }
+  .document-content ul[data-type='taskList'] li[data-checked='true'] > div {
+    @apply text-muted-foreground line-through;
+  }
+  .document-content hr {
+    @apply my-6 border-t;
+  }
+  .document-content img {
+    @apply max-w-full rounded-lg border;
+  }
+  .document-content img.ProseMirror-selectednode {
+    @apply ring-2 ring-ring;
+  }
+  .document-content .tableWrapper {
+    @apply overflow-x-auto;
+  }
+  .document-content table {
+    @apply w-full border-collapse text-left;
+  }
+  .document-content th,
+  .document-content td {
+    @apply relative min-w-24 border px-3 py-1.5 align-top;
+  }
+  .document-content th {
+    @apply bg-muted/50 font-medium;
+  }
+  .document-content th > p,
+  .document-content td > p {
+    @apply my-0;
+  }
+  .document-content .selectedCell::after {
+    @apply pointer-events-none absolute inset-0 bg-primary/10 content-[''];
+  }
+  .document-content p.is-editor-empty:first-child::before {
+    @apply pointer-events-none float-left h-0 text-muted-foreground content-[attr(data-placeholder)];
+  }
+}
