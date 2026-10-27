@@ -17,3 +17,17 @@
 - 遵守项目禁止无意义封装的要求。仅为复用逻辑、稳定领域语义或复杂约束建立抽象，不包装一两行字段转发。
 - 上游组件源码由项目维护；更新先使用 CLI 的 --dry-run/--diff，保留本地中文文案与移动端订阅修正。官方组件附带的 variants 和 message scroller hooks 写在 ESLint 刷新白名单里。
 - 根目录 `pnpm check` 必须通过。业务页面不得通过关闭 lint 规则绕过 shadcn 控件约束。
+
+## Agent skills
+
+### Issue tracker
+
+Issue 记录在 GitHub Issues（yankewei/weave），通过 `gh` CLI 操作。See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+使用默认的五个标签：needs-triage、needs-info、ready-for-agent、ready-for-human、wontfix。See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+单上下文布局：根目录一个 `GLOSSARY.md`，ADR 放在 `docs/adr/`。See `docs/agents/domain.md`.
