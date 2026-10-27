@@ -13,6 +13,7 @@ import {
   useEditorState,
   type Editor,
 } from '@tiptap/react';
+import { useParams } from 'next/navigation';
 import { Placeholder } from '@tiptap/extensions';
 import {
   BetweenHorizontalEndIcon,
@@ -43,6 +44,7 @@ import {
 } from 'lucide-react';
 import { imageUploadTypes } from '@/lib/contracts';
 import { documentExtensions } from '@/lib/document-extensions';
+import { referenceLinks } from '@/lib/reference-links';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -67,16 +69,17 @@ export type InsertImage = (image: { src: string; alt: string }) => void;
 
 /** Renders a stored Markdown body the same way the editor shows it. */
 export function DocumentContent({ markdown }: { markdown: string }) {
+  const { workspaceId } = useParams<{ workspaceId: string }>();
   const editor = useEditor(
     {
-      extensions: documentExtensions,
+      extensions: [...documentExtensions, referenceLinks(workspaceId)],
       content: markdown,
       contentType: 'markdown',
       editable: false,
       immediatelyRender: false,
       editorProps: { attributes: { class: 'document-content' } },
     },
-    [markdown],
+    [markdown, workspaceId],
   );
   return <EditorContent editor={editor} />;
 }
@@ -107,9 +110,11 @@ export function RichTextEditor({
     handlers.current = { onChange, onLoad, onImages };
   });
 
+  const { workspaceId } = useParams<{ workspaceId: string }>();
   const editor = useEditor({
     extensions: [
       ...documentExtensions,
+      referenceLinks(workspaceId),
       Placeholder.configure({
         placeholder: '写下需求、方案或一个待讨论的问题…',
       }),

@@ -52,6 +52,8 @@ import {
 } from '@/components/ui/message-scroller';
 import { Spinner } from '@/components/ui/spinner';
 import { useConfirmation } from '@/hooks/use-confirmation';
+import { taskKey } from '@/lib/references';
+import { ReferenceText } from '@/components/reference-text';
 
 export type TaskConversationHandle = {
   ready: boolean;
@@ -336,7 +338,9 @@ export const TaskConversation = forwardRef(function TaskConversation(
                               message.authorType === 'user' ? 'end' : 'start'
                             }
                           >
-                            <BubbleContent>{message.body}</BubbleContent>
+                            <BubbleContent>
+                              <ReferenceText text={message.body} />
+                            </BubbleContent>
                           </Bubble>
                         </MessageContent>
                       </Message>
@@ -370,18 +374,21 @@ export const TaskConversation = forwardRef(function TaskConversation(
                                 </Badge>
                                 {item.taskNumber ? (
                                   <Badge variant="secondary">
-                                    WV-{item.taskNumber}
+                                    {taskKey(item.taskNumber)}
                                   </Badge>
                                 ) : null}
                               </div>
                               {item.description ? (
                                 <p className="text-sm text-muted-foreground">
-                                  {item.description}
+                                  <ReferenceText text={item.description} />
                                 </p>
                               ) : null}
                               {item.acceptanceCriteria ? (
                                 <p className="text-xs text-muted-foreground">
-                                  验收：{item.acceptanceCriteria}
+                                  验收：
+                                  <ReferenceText
+                                    text={item.acceptanceCriteria}
+                                  />
                                 </p>
                               ) : null}
                             </div>
@@ -427,7 +434,9 @@ export const TaskConversation = forwardRef(function TaskConversation(
                         <MessageContent>
                           <MessageHeader>你</MessageHeader>
                           <Bubble variant="default" align="end">
-                            <BubbleContent>{pendingUser}</BubbleContent>
+                            <BubbleContent>
+                              <ReferenceText text={pendingUser} />
+                            </BubbleContent>
                           </Bubble>
                         </MessageContent>
                       </Message>
@@ -440,7 +449,9 @@ export const TaskConversation = forwardRef(function TaskConversation(
                           <MessageHeader>AI</MessageHeader>
                           {streamReply ? (
                             <Bubble variant="muted" align="start">
-                              <BubbleContent>{streamReply}</BubbleContent>
+                              <BubbleContent>
+                                <ReferenceText text={streamReply} />
+                              </BubbleContent>
                             </Bubble>
                           ) : null}
                           <Marker>
@@ -472,7 +483,7 @@ export const TaskConversation = forwardRef(function TaskConversation(
                       </CardTitle>
                       <CardDescription>
                         {item.taskNumber
-                          ? `WV-${item.taskNumber} · 已写入看板`
+                          ? `${taskKey(item.taskNumber)} · 已写入看板`
                           : '已写入看板'}
                       </CardDescription>
                     </CardHeader>

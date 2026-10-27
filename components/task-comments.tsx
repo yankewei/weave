@@ -19,6 +19,7 @@ import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import { Textarea } from '@/components/ui/textarea';
+import { ReferenceText } from '@/components/reference-text';
 
 function formatCommentTime(value: string) {
   return new Date(value).toLocaleString('zh-CN', {
@@ -58,7 +59,7 @@ function CommentItem({
         </time>
       </div>
       <p className="text-sm leading-6 whitespace-pre-wrap wrap-anywhere">
-        {comment.body}
+        <ReferenceText text={comment.body} />
       </p>
       {(!isReply && onReply) || mine ? (
         <div className="flex items-center gap-1">

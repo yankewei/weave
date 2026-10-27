@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   projectMemberSchema,
   taskSchema,
@@ -69,6 +70,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { taskKey } from '@/lib/references';
 
 export function TaskBoard({
   projectId,
@@ -98,6 +100,8 @@ export function TaskBoard({
     status: TaskStatus;
   } | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
+  // DEV-n links land here with ?task=<id> so the task opens on arrival.
+  const requestedTaskId = useSearchParams().get('task');
   const writing = useRef(false);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -118,6 +122,9 @@ export function TaskBoard({
       .then(([tasks, members]) => {
         setTasks(tasks);
         setMembers(members);
+        const requested = tasks.find((task) => task.id === requestedTaskId);
+        if (requested)
+          setEditing({ task: requested, status: requested.status });
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted)
@@ -127,13 +134,13 @@ export function TaskBoard({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [projectId, retry]);
+  }, [projectId, retry, requestedTaskId]);
 
   const filtered = tasks.filter((task) => {
     const text = query.trim().toLocaleLowerCase();
     return (
       (!text ||
-        `${task.title}\n${task.description}\nWV-${task.number}`
+        `${task.title}\n${task.description}\n${taskKey(task.number)}`
           .toLocaleLowerCase()
           .includes(text)) &&
       (priority === 'all' || task.priority === priority) &&
@@ -168,7 +175,7 @@ export function TaskBoard({
       committed = true;
       setTasks(await api(`/projects/${projectId}/tasks`, taskSchema.array()));
       setNotice(
-        `WV-${task.number} 已移至「${taskStatusLabels[status]}」，顺序已保存。`,
+        `${taskKey(task.number)} 已移至「${taskStatusLabels[status]}」，顺序已保存。`,
       );
     } catch (error) {
       setError(
@@ -214,7 +221,7 @@ export function TaskBoard({
   async function committed(task: Task) {
     setEditing({ task, status: task.status });
     onDirtyChange(false);
-    setNotice(`WV-${task.number} 已保存。`);
+    setNotice(`${taskKey(task.number)} 已保存。`);
     try {
       setTasks(await api(`/projects/${projectId}/tasks`, taskSchema.array()));
     } catch {
@@ -393,7 +400,8 @@ export function TaskBoard({
                 <CardHeader>
                   <CardTitle>{active.title}</CardTitle>
                   <CardDescription>
-                    WV-{active.number} · {taskPriorityLabels[active.priority]}
+                    {taskKey(active.number)} ·{' '}
+                    {taskPriorityLabels[active.priority]}
                     优先级
                   </CardDescription>
                 </CardHeader>
@@ -538,7 +546,7 @@ function TaskCard({
               {task.title}
             </Button>
           </CardTitle>
-          <CardDescription>WV-{task.number}</CardDescription>
+          <CardDescription>{taskKey(task.number)}</CardDescription>
           <CardAction>
             <Button
               ref={setActivatorNodeRef}
@@ -547,7 +555,7 @@ function TaskCard({
               className="touch-none"
               {...attributes}
               {...listeners}
-              aria-label={`拖动 WV-${task.number}`}
+              aria-label={`拖动 ${taskKey(task.number)}`}
               disabled={busy}
             >
               <GripVerticalIcon />

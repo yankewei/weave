@@ -33,6 +33,7 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty';
 import { Skeleton } from '@/components/ui/skeleton';
+import { taskKey } from '@/lib/references';
 
 type Activity = WorkspaceOverview['activity'][number];
 
@@ -50,7 +51,9 @@ function describeActivity(item: Activity) {
     if (item.action === 'restore') return `恢复了《${item.title}》`;
     return `${item.action === 'create' ? '创建了' : '编辑了'}《${item.title}》`;
   }
-  const task = `WV-${item.taskNumber} ${item.title}`;
+  const task = item.taskNumber
+    ? `${taskKey(item.taskNumber)} ${item.title}`
+    : item.title;
   if (item.action === 'move' && item.taskStatus)
     return `把 ${task} 移到${taskStatusLabels[item.taskStatus]}`;
   if (item.action === 'create')

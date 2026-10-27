@@ -161,8 +161,8 @@ export async function insert(
   source?: { proposalId: string; proposalItemId: string },
 ) {
   const counter = await client.query<{ number: number }>(
-    'UPDATE projects SET task_counter = task_counter + 1 WHERE id = $1 RETURNING task_counter AS number',
-    [projectId],
+    'UPDATE workspaces SET task_counter = task_counter + 1 WHERE id = $1 RETURNING task_counter AS number',
+    [workspaceId],
   );
   const id = randomUUID();
   const position = await positionBefore(

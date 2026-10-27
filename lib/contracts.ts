@@ -141,6 +141,7 @@ export const documentSchema = documentInputSchema.extend({
   id: z.uuid(),
   workspaceId: z.uuid(),
   projectId: z.uuid(),
+  number: z.number().int().positive(),
   version: z.number().int().positive(),
   updatedAt: z.string(),
 });

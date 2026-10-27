@@ -105,9 +105,10 @@ export function overview(
       `SELECT * FROM (
          SELECT e.operation_id AS id, 'task' AS kind, e.kind AS action, e.project_id AS "projectId",
            p.name AS "projectName", e.task_id AS "targetId", e.after_state->>'title' AS title,
-           (e.after_state->>'number')::int AS "taskNumber", e.after_state->>'status' AS "taskStatus",
+           t.number AS "taskNumber", e.after_state->>'status' AS "taskStatus",
            e.proposal_id IS NOT NULL AS "fromProposal", u.name AS "actorName", e.created_at AS "createdAt"
-         FROM task_events e JOIN projects p ON p.id = e.project_id JOIN users u ON u.id = e.initiator_id
+         FROM task_events e JOIN tasks t ON t.id = e.task_id JOIN projects p ON p.id = e.project_id
+         JOIN users u ON u.id = e.initiator_id
          WHERE e.workspace_id = $1
          UNION ALL
          SELECT r.operation_id, 'document', r.kind, r.project_id, p.name, r.document_id, r.title,

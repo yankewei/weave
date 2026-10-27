@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/empty';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { taskKey } from '@/lib/references';
 
 const panelStatuses: TaskStatus[] = ['in_progress', 'todo'];
 const emptyHints: Record<TaskStatus, string> = {
@@ -140,7 +141,7 @@ export function TaskPanel({
                     >
                       <p className="flex min-w-0 items-baseline gap-2">
                         <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                          WV-{task.number}
+                          {taskKey(task.number)}
                         </span>
                         <span className="truncate font-medium">
                           {task.title}
