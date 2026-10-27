@@ -1,11 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { diffLines } from 'diff';
 import {
   documentSchema,
   imageUploadMaxBytes,
-  imageUploadTypes,
   revisionSchema,
   uploadSchema,
   type Document,
@@ -14,14 +13,28 @@ import { api, ApiError } from '@/lib/api';
 import {
   AlertCircleIcon,
   CheckIcon,
+  FileTextIcon,
   HistoryIcon,
-  ImageIcon,
+  PencilIcon,
   RotateCcwIcon,
   SaveIcon,
 } from 'lucide-react';
+import {
+  DocumentContent,
+  RichTextEditor,
+  type InsertImage,
+} from '@/components/rich-text-editor';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty';
 import {
   Field,
   FieldDescription,
@@ -29,7 +42,6 @@ import {
   FieldLabel,
 } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
@@ -56,8 +68,12 @@ export function DocumentEditor({
   onDirtyChange: (dirty: boolean) => void;
   onBusyChange: (busy: boolean) => void;
 }) {
+  const [editing, setEditing] = useState(document.body === '');
   const [title, setTitle] = useState(document.title);
   const [body, setBody] = useState(document.body);
+  // The editor rewrites Markdown into its own canonical form on load; only edits after that count.
+  const [baseline, setBaseline] = useState(document.body);
+  const [editorKey, setEditorKey] = useState(0);
   const [revisions, setRevisions] = useState<
     ReturnType<typeof revisionSchema.parse>[]
   >([]);
@@ -71,10 +87,8 @@ export function DocumentEditor({
   const [retry, setRetry] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
   const { confirm, confirmationDialog } = useConfirmation();
-  const dirty = title !== document.title || body !== document.body;
+  const dirty = title !== document.title || body !== baseline;
   const selected =
     revisions.find((revision) => revision.version === selectedVersion) ??
     revisions[0];
@@ -140,8 +154,10 @@ export function DocumentEditor({
       });
       setTitle(updated.title);
       setBody(updated.body);
+      setBaseline(updated.body);
       onSaved(updated);
       setSelectedVersion(null);
+      setEditing(false);
       setNotice(
         updated.version === document.version
           ? '内容没有变化，无需新增版本。'
@@ -159,8 +175,8 @@ export function DocumentEditor({
     }
   }
 
-  // Each image is linked at the caret as soon as it lands, so a later failure keeps earlier ones.
-  async function upload(files: File[]) {
+  // Each image is inserted at the caret as soon as it lands, so a later failure keeps earlier ones.
+  async function upload(files: File[], insert: InsertImage) {
     const images = files.filter((file) => file.type.startsWith('image/'));
     if (images.length === 0) return;
     const tooLarge = images.find((file) => file.size > imageUploadMaxBytes);
@@ -168,7 +184,6 @@ export function DocumentEditor({
       setUploadError(`${tooLarge.name} 超过 4 MB，没有上传。`);
       return;
     }
-    let at = bodyRef.current?.selectionEnd ?? body.length;
     setUploading(true);
     setUploadError('');
     try {
@@ -180,13 +195,7 @@ export function DocumentEditor({
           uploadSchema,
           { method: 'POST', body: form, timeoutMs: 60_000 },
         );
-        const link = `![${uploaded.fileName}](${uploaded.url})\n`;
-        const position = at;
-        setBody(
-          (current) =>
-            current.slice(0, position) + link + current.slice(position),
-        );
-        at += link.length;
+        insert({ src: uploaded.url, alt: uploaded.fileName });
       }
     } catch (error) {
       setUploadError(
@@ -222,9 +231,8 @@ export function DocumentEditor({
           }),
         },
       );
-      setTitle(updated.title);
-      setBody(updated.body);
-      onSaved(updated);
+      replaceDraft(updated);
+      setEditing(false);
       setSelectedVersion(null);
       setConflict(false);
       setNotice(
@@ -241,6 +249,30 @@ export function DocumentEditor({
     }
   }
 
+  function replaceDraft(updated: Document) {
+    setTitle(updated.title);
+    setBody(updated.body);
+    setBaseline(updated.body);
+    setEditorKey((key) => key + 1);
+    onSaved(updated);
+  }
+
+  async function cancel() {
+    if (
+      dirty &&
+      !(await confirm({
+        title: '放弃这次编辑？',
+        description: '未保存的标题和正文修改将丢失，文档保持当前版本。',
+        confirmLabel: '放弃修改',
+      }))
+    )
+      return;
+    replaceDraft(document);
+    setError('');
+    setConflict(false);
+    setEditing(false);
+  }
+
   async function reload() {
     if (
       dirty &&
@@ -255,9 +287,7 @@ export function DocumentEditor({
     onBusyChange(true);
     try {
       const updated = await api(`/documents/${document.id}`, documentSchema);
-      setTitle(updated.title);
-      setBody(updated.body);
-      onSaved(updated);
+      replaceDraft(updated);
       setError('');
       setConflict(false);
       setNotice('已加载最新版本。');
@@ -279,36 +309,65 @@ export function DocumentEditor({
           }}
         >
           <header className="flex min-h-20 flex-wrap items-center justify-between gap-4 px-6 py-4 sm:px-8">
-            <div className="flex min-w-0 flex-col gap-1">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">文档</span>
-                <Badge variant="outline">v{document.version}</Badge>
-              </div>
-              <h1 className="max-w-full truncate text-lg font-medium">
-                {document.title}
-              </h1>
-            </div>
-            <div className="flex items-center gap-3">
-              <span
-                className="hidden text-xs text-muted-foreground sm:inline"
-                role="status"
-              >
-                {busy ? '正在保存…' : dirty ? '有未保存的修改' : '已保存'}
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>{editing ? '正在编辑' : '文档'}</span>
+              <Badge variant="outline">v{document.version}</Badge>
+              <span>
+                更新于{' '}
+                {new Date(document.updatedAt).toLocaleString('zh-CN', {
+                  month: 'numeric',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
               </span>
-              <Button
-                type="submit"
-                disabled={
-                  busy || navigationBusy || uploading || !dirty || conflict
-                }
-              >
-                {busy ? (
-                  <Spinner data-icon="inline-start" />
-                ) : (
-                  <SaveIcon data-icon="inline-start" />
-                )}
-                保存修改
-              </Button>
             </div>
+            {editing ? (
+              <div className="flex items-center gap-3">
+                <span
+                  className="hidden text-xs text-muted-foreground sm:inline"
+                  role="status"
+                >
+                  {busy ? '正在保存…' : dirty ? '有未保存的修改' : '没有修改'}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy || navigationBusy || uploading}
+                  onClick={() => {
+                    void cancel();
+                  }}
+                >
+                  取消
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={
+                    busy || navigationBusy || uploading || !dirty || conflict
+                  }
+                >
+                  {busy ? (
+                    <Spinner data-icon="inline-start" />
+                  ) : (
+                    <SaveIcon data-icon="inline-start" />
+                  )}
+                  保存修改
+                </Button>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy || navigationBusy}
+                onClick={() => {
+                  setNotice('');
+                  setEditing(true);
+                }}
+              >
+                <PencilIcon data-icon="inline-start" />
+                编辑
+              </Button>
+            )}
           </header>
           <Separator />
           <div className="flex flex-col gap-6 px-6 py-6 sm:px-8">
@@ -349,87 +408,77 @@ export function DocumentEditor({
                 <AlertTitle>{notice}</AlertTitle>
               </Alert>
             )}
-            <FieldGroup>
-              <Field data-disabled={busy || navigationBusy}>
-                <FieldLabel htmlFor="document-title">文档标题</FieldLabel>
-                <Input
-                  id="document-title"
-                  value={title}
-                  onChange={(event) => setTitle(event.target.value)}
-                  required
-                  maxLength={200}
-                  disabled={busy || navigationBusy}
-                />
-              </Field>
-              <Field data-disabled={busy || navigationBusy}>
-                <div className="flex items-center justify-between gap-3">
-                  <FieldLabel htmlFor="document-body">文档正文</FieldLabel>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={busy || navigationBusy || uploading}
-                      onClick={() => fileRef.current?.click()}
-                    >
-                      {uploading ? (
-                        <Spinner data-icon="inline-start" />
-                      ) : (
-                        <ImageIcon data-icon="inline-start" />
-                      )}
-                      {uploading ? '正在上传…' : '插入图片'}
-                    </Button>
-                    <Badge variant="secondary">Markdown</Badge>
+            {editing ? (
+              <FieldGroup>
+                <Field data-disabled={busy || navigationBusy}>
+                  <FieldLabel htmlFor="document-title">文档标题</FieldLabel>
+                  <Input
+                    id="document-title"
+                    value={title}
+                    onChange={(event) => setTitle(event.target.value)}
+                    required
+                    maxLength={200}
+                    disabled={busy || navigationBusy}
+                  />
+                </Field>
+                <Field data-disabled={busy || navigationBusy}>
+                  <FieldLabel id="document-body-label">文档正文</FieldLabel>
+                  <div className="min-w-0 rounded-lg border">
+                    <RichTextEditor
+                      key={editorKey}
+                      labelId="document-body-label"
+                      markdown={body}
+                      disabled={busy || navigationBusy}
+                      onChange={setBody}
+                      onLoad={(markdown) => {
+                        setBody(markdown);
+                        setBaseline(markdown);
+                      }}
+                      uploading={uploading}
+                      onImages={(files, insert) => {
+                        void upload(files, insert);
+                      }}
+                    />
                   </div>
-                </div>
-                <Input
-                  ref={fileRef}
-                  type="file"
-                  accept={imageUploadTypes.join(',')}
-                  multiple
-                  hidden
-                  tabIndex={-1}
-                  aria-hidden="true"
-                  onChange={(event) => {
-                    const files = Array.from(event.target.files ?? []);
-                    event.target.value = '';
-                    void upload(files);
-                  }}
-                />
-                <Textarea
-                  ref={bodyRef}
-                  id="document-body"
-                  className="min-h-96 resize-y xl:min-h-[calc(100svh-22rem)]"
-                  value={body}
-                  onChange={(event) => setBody(event.target.value)}
-                  onPaste={(event) => {
-                    const files = Array.from(event.clipboardData.files);
-                    if (!files.some((file) => file.type.startsWith('image/')))
-                      return;
-                    event.preventDefault();
-                    void upload(files);
-                  }}
-                  onDragOver={(event) => {
-                    if (event.dataTransfer.types.includes('Files'))
-                      event.preventDefault();
-                  }}
-                  onDrop={(event) => {
-                    const files = Array.from(event.dataTransfer.files);
-                    if (files.length === 0) return;
-                    event.preventDefault();
-                    void upload(files);
-                  }}
-                  maxLength={200_000}
-                  placeholder="写下需求、方案或一个待讨论的问题…"
-                  spellCheck={false}
-                  disabled={busy || navigationBusy || uploading}
-                />
-                <FieldDescription>
-                  {body.length.toLocaleString()} 字符 ·
-                  可以粘贴或拖入图片，只有工作空间成员能看到。每次正式保存都会留下可比较的版本。
-                </FieldDescription>
-              </Field>
-            </FieldGroup>
+                  <FieldDescription>
+                    {body.length.toLocaleString()} / 200,000 字符 · 输入 # 、-
+                    、1. 、&gt; 、```
+                    可以快速转换格式；光标在表格里时，工具栏下方出现增删行列的按钮。可以粘贴或拖入图片，只有工作空间成员能看到。每次正式保存都会留下可比较的版本。
+                  </FieldDescription>
+                </Field>
+              </FieldGroup>
+            ) : (
+              <article className="flex min-w-0 flex-col gap-6">
+                <h1 className="text-3xl font-semibold wrap-anywhere">
+                  {document.title}
+                </h1>
+                {document.body ? (
+                  <DocumentContent markdown={document.body} />
+                ) : (
+                  <Empty className="border border-dashed">
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon">
+                        <FileTextIcon />
+                      </EmptyMedia>
+                      <EmptyTitle>这篇文档还没有正文</EmptyTitle>
+                      <EmptyDescription>
+                        进入编辑，写下需求、方案或一个待讨论的问题。
+                      </EmptyDescription>
+                    </EmptyHeader>
+                    <EmptyContent>
+                      <Button
+                        type="button"
+                        disabled={busy || navigationBusy}
+                        onClick={() => setEditing(true)}
+                      >
+                        <PencilIcon data-icon="inline-start" />
+                        开始编辑
+                      </Button>
+                    </EmptyContent>
+                  </Empty>
+                )}
+              </article>
+            )}
           </div>
         </form>
       </section>
