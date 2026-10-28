@@ -6,7 +6,6 @@ require __DIR__ . '/../vendor/autoload.php';
 
 use Amp\ByteStream;
 use Amp\Http\Client\HttpClientBuilder;
-use Amp\Http\Server\DefaultErrorHandler;
 use Amp\Http\Server\Middleware\ForwardedHeaderType;
 use Amp\Http\Server\RequestHandler\ClosureRequestHandler;
 use Amp\Http\Server\Router;
@@ -21,6 +20,7 @@ use Weave\Api\ApiMiddleware;
 use Weave\Api\Auth;
 use Weave\Api\Config;
 use Weave\Api\HealthHandler;
+use Weave\Api\JsonErrorHandler;
 
 use function Amp\trapSignal;
 
@@ -49,8 +49,9 @@ $server = SocketHttpServer::createForBehindProxy(
 );
 $server->expose("{$config->host}:{$config->port}");
 
-$router = new Router($server, $logger, new DefaultErrorHandler());
-$router->addMiddleware(new ApiMiddleware($config, $logger));
+$errorHandler = new JsonErrorHandler();
+$router = new Router($server, $logger, $errorHandler);
+$router->addMiddleware(new ApiMiddleware($config, $errorHandler, $logger));
 $router->addRoute('GET', '/api/health', new HealthHandler($database, $http, $config, $logger));
 
 $auth = new Auth($database, $config);
@@ -59,7 +60,7 @@ $router->addRoute('POST', '/api/auth/register', new ClosureRequestHandler($auth-
 $router->addRoute('POST', '/api/auth/login', new ClosureRequestHandler($auth->login(...)));
 $router->addRoute('POST', '/api/auth/logout', new ClosureRequestHandler($auth->logout(...)));
 
-$server->start($router, new DefaultErrorHandler());
+$server->start($router, $errorHandler);
 
 $signal = trapSignal([SIGINT, SIGTERM]);
 $logger->info("Received signal {$signal}, stopping");

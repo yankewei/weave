@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Weave\Api;
 
+use Amp\Http\HttpStatus;
+use Amp\Http\Server\ClientException;
+use Amp\Http\Server\ErrorHandler;
 use Amp\Http\Server\Middleware;
 use Amp\Http\Server\Request;
 use Amp\Http\Server\RequestHandler;
@@ -17,35 +20,59 @@ final readonly class ApiMiddleware implements Middleware
 {
     private const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS'];
 
-    public function __construct(private Config $config, private LoggerInterface $logger)
-    {
+    public function __construct(
+        private Config $config,
+        private ErrorHandler $errorHandler,
+        private LoggerInterface $logger,
+    ) {
     }
 
     public function handleRequest(Request $request, RequestHandler $requestHandler): Response
     {
         try {
-            $this->assertSameOrigin($request);
-            $response = $requestHandler->handleRequest($request);
-        } catch (ApiError $error) {
-            $response = self::error($error->status, $error->getMessage());
-        } catch (PostgresQueryError $error) {
-            $response = match ($error->getDiagnostics()['sqlstate'] ?? null) {
-                '23505' => self::error(409, '数据冲突。'),
-                '40P01' => self::error(409, '数据正在被其他操作处理，请重试。'),
-                default => $this->unhandled($error),
-            };
-        } catch (\Throwable $error) {
-            $response = $this->unhandled($error);
+            $response = $this->respond($request, $requestHandler);
+            // amphp stops parsing a keep-alive connection until the body is consumed,
+            // so a request rejected before reading it would stall the next one.
+            $body = $request->getBody();
+            while ($body->isReadable() && $body->read() !== null);
+        } catch (ClientException $error) {
+            // Reading the body hit a server limit such as the size cap. The driver
+            // stops parsing and leaves the answer to this handler, so the rest of
+            // the body is unreadable and the connection has to close. Mirrors the
+            // driver's own Http1Driver::sendErrorResponse, which is private.
+            $status = $error->getCode();
+            $response = $this->errorHandler->handleError(
+                HttpStatus::isClientError($status) || HttpStatus::isServerError($status) ? $status : 400,
+                request: $request,
+            );
+            $response->setHeader('connection', 'close');
         }
         if (!$response->hasHeader('cache-control')) {
             $response->setHeader('cache-control', 'no-store');
         }
-        // amphp stops parsing a keep-alive connection until the body is consumed,
-        // so a request rejected before reading it would stall the next one.
-        $body = $request->getBody();
-        while ($body->isReadable() && $body->read() !== null);
 
         return $response;
+    }
+
+    private function respond(Request $request, RequestHandler $requestHandler): Response
+    {
+        try {
+            $this->assertSameOrigin($request);
+
+            return $requestHandler->handleRequest($request);
+        } catch (ClientException $error) {
+            throw $error;
+        } catch (ApiError $error) {
+            return Json::error($error->status, $error->getMessage());
+        } catch (PostgresQueryError $error) {
+            return match ($error->getDiagnostics()['sqlstate'] ?? null) {
+                '23505' => Json::error(409, '数据冲突。'),
+                '40P01' => Json::error(409, '数据正在被其他操作处理，请重试。'),
+                default => $this->unhandled($error),
+            };
+        } catch (\Throwable $error) {
+            return $this->unhandled($error);
+        }
     }
 
     // A non-simple header blocks cross-origin form posts; the Origin check keeps
@@ -85,11 +112,6 @@ final readonly class ApiMiddleware implements Middleware
     {
         $this->logger->error('Unhandled API error: {error}', ['error' => $error]);
 
-        return self::error(500, '服务器出错了，请稍后重试。');
-    }
-
-    private static function error(int $status, string $message): Response
-    {
-        return Json::response(['statusCode' => $status, 'message' => $message], $status);
+        return $this->errorHandler->handleError(500);
     }
 }
