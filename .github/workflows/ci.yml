@@ -10,6 +10,27 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # The API tests run bin/server.php against a throwaway schema in this database.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: weave
+          POSTGRES_PASSWORD: weave
+          POSTGRES_DB: weave
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U weave -d weave"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: weave
+      POSTGRES_PASSWORD: weave
+      POSTGRES_DB: weave
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -20,7 +41,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.5'
-          extensions: pcntl, pgsql
+          extensions: pcntl, pgsql, sodium
           tools: composer:v2
       - run: pnpm install --frozen-lockfile
       - run: composer install --working-dir=api --no-interaction --no-progress

@@ -11,11 +11,21 @@
     "amphp/http-server": "^3.4",
     "amphp/http-server-router": "^2.0",
     "amphp/log": "^2.0",
+    "amphp/parallel": "^2.3",
     "amphp/postgres": "^2.2"
+  },
+  "require-dev": {
+    "phpstan/phpstan": "^2",
+    "phpunit/phpunit": "^13.4"
   },
   "autoload": {
     "psr-4": {
       "Weave\\Api\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Weave\\Api\\Tests\\": "tests/"
     }
   },
   "config": {
@@ -23,9 +33,10 @@
   },
   "scripts": {
     "serve": "php bin/server.php",
-    "check": "phpstan analyse --no-progress"
-  },
-  "require-dev": {
-    "phpstan/phpstan": "^2"
+    "check": [
+      "phpstan analyse --no-progress",
+      "phpunit"
+    ],
+    "test": "phpunit"
   }
 }
