@@ -42,11 +42,11 @@ final readonly class Auth
     {
         // Like legacy, spend the budget before validating so bad payloads are throttled too.
         $this->limitAttempts($this->attemptKey($request));
-        $input = self::input(Json::object($request), withProfile: true);
+        $input = self::input($request, withProfile: true);
         $salt = bin2hex(random_bytes(16));
         $key = $this->workers->submit(new DeriveKey($input['password'], $salt))->await();
         try {
-            [$user, $token] = $this->transaction(function (PostgresExecutor $db) use ($input, $salt, $key): array {
+            [$user, $token] = Sql::transaction($this->database, function (PostgresExecutor $db) use ($input, $salt, $key): array {
                 $user = self::user($db->execute(
                     'INSERT INTO users(id, email, name, password_hash) VALUES(gen_random_uuid(), $1, $2, $3)
                      RETURNING id, name, email',
@@ -58,7 +58,7 @@ final readonly class Auth
                 )->fetchRow();
                 $db->execute(
                     "INSERT INTO workspace_members(workspace_id, user_id, role) VALUES($1, $2, 'admin')",
-                    [self::string($workspace, 'id'), $user['id']],
+                    [Sql::string($workspace, 'id'), $user['id']],
                 );
 
                 return [$user, self::createSession($db, $user['id'])];
@@ -77,14 +77,14 @@ final readonly class Auth
     // past the limit; a correct password hands it back, so only failures add up.
     public function login(Request $request): Response
     {
-        $input = self::input(Json::object($request), withProfile: false);
+        $input = self::input($request, withProfile: false);
         $attemptKey = $this->attemptKey($request);
         $this->limitAttempts($attemptKey);
         $account = $this->database->execute(
             'SELECT id, name, email, password_hash FROM users WHERE email = $1',
             [$input['email']],
         )->fetchRow();
-        [$salt, $savedKey] = explode(':', $account === null ? '' : self::string($account, 'password_hash'), 2) + ['', ''];
+        [$salt, $savedKey] = explode(':', $account === null ? '' : Sql::string($account, 'password_hash'), 2) + ['', ''];
         // libsodium only takes 32-byte salts, which is what every stored hash has;
         // anything else fails like an unknown account. Both still derive, so
         // timing does not reveal which accounts exist.
@@ -139,7 +139,7 @@ final readonly class Auth
     // Every registration spends the budget, so one address cannot mass-create accounts.
     private function limitAttempts(string $attemptKey): void
     {
-        $row = $this->transaction(function (PostgresExecutor $db) use ($attemptKey): ?array {
+        $row = Sql::transaction($this->database, function (PostgresExecutor $db) use ($attemptKey): ?array {
             $db->query('DELETE FROM auth_attempts WHERE resets_at < now()');
 
             return $db->execute(
@@ -194,26 +194,6 @@ final readonly class Auth
         return hash('sha256', $entries[max(0, count($entries) - $this->config->trustedProxyHops)] ?? 'unknown');
     }
 
-    /**
-     * @template T
-     * @param \Closure(PostgresExecutor): T $run
-     * @return T
-     */
-    private function transaction(\Closure $run): mixed
-    {
-        $transaction = $this->database->beginTransaction();
-        try {
-            $result = $run($transaction);
-            $transaction->commit();
-
-            return $result;
-        } finally {
-            if ($transaction->isActive()) {
-                $transaction->rollback();
-            }
-        }
-    }
-
     private static function token(Request $request): ?string
     {
         $value = $request->getCookie(self::COOKIE)?->getValue();
@@ -222,46 +202,21 @@ final readonly class Auth
     }
 
     /**
-     * Mirrors the legacy zod schemas: strict keys, lower-cased email, trimmed names.
+     * Mirrors the legacy zod schemas: lower-cased email, trimmed names.
      *
-     * @param array<mixed> $payload
      * @return array{email: string, password: string, name: string, workspaceName: string}
      */
-    private static function input(array $payload, bool $withProfile): array
+    private static function input(Request $request, bool $withProfile): array
     {
         $fields = $withProfile ? ['email', 'password', 'name', 'workspaceName'] : ['email', 'password'];
-        $issues = [];
-        foreach (array_diff(array_map(strval(...), array_keys($payload)), $fields) as $unknown) {
-            $issues[] = "{$unknown}: 不支持的字段";
-        }
-        $text = static function (string $field, int $min, int $max, bool $trim) use ($payload, &$issues): string {
-            $value = $payload[$field] ?? null;
-            if (!is_string($value)) {
-                $issues[] = "{$field}: 必须是字符串";
-
-                return '';
-            }
-            $value = $trim ? trim($value) : $value;
-            $length = mb_strlen($value);
-            if ($length < $min || $length > $max) {
-                $issues[] = "{$field}: 长度应为 {$min}–{$max} 个字符";
-            }
-
-            return $value;
-        };
-        $email = mb_strtolower($text('email', 3, 254, false));
-        if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
-            $issues[] = 'email: 邮箱格式不正确';
-        }
+        $payload = Input::json($request, ...$fields);
         $input = [
-            'email' => $email,
-            'password' => $text('password', 12, 128, false),
-            'name' => $withProfile ? $text('name', 1, 80, true) : '',
-            'workspaceName' => $withProfile ? $text('workspaceName', 1, 100, true) : '',
+            'email' => $payload->email('email'),
+            'password' => $payload->text('password', 12, 128, trim: false),
+            'name' => $withProfile ? $payload->text('name', 1, 80) : '',
+            'workspaceName' => $withProfile ? $payload->text('workspaceName', 1, 100) : '',
         ];
-        if ($issues !== []) {
-            throw new ApiError(400, implode('；', $issues));
-        }
+        $payload->check();
 
         return $input;
     }
@@ -273,20 +228,9 @@ final readonly class Auth
     private static function user(array $row): array
     {
         return [
-            'id' => self::string($row, 'id'),
-            'name' => self::string($row, 'name'),
-            'email' => self::string($row, 'email'),
+            'id' => Sql::string($row, 'id'),
+            'name' => Sql::string($row, 'name'),
+            'email' => Sql::string($row, 'email'),
         ];
-    }
-
-    /** @param array<string, mixed>|null $row */
-    private static function string(?array $row, string $column): string
-    {
-        $value = $row[$column] ?? null;
-        if (!is_string($value)) {
-            throw new \UnexpectedValueException("Expected a string in column {$column}");
-        }
-
-        return $value;
     }
 }
