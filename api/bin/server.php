@@ -12,6 +12,7 @@ use Amp\Http\Server\Router;
 use Amp\Http\Server\SocketHttpServer;
 use Amp\Log\ConsoleFormatter;
 use Amp\Log\StreamHandler;
+use Amp\Parallel\Worker\ContextWorkerPool;
 use Amp\Postgres\PostgresConfig;
 use Amp\Postgres\PostgresConnectionPool;
 use Monolog\Logger;
@@ -54,7 +55,8 @@ $router = new Router($server, $logger, $errorHandler);
 $router->addMiddleware(new ApiMiddleware($config, $errorHandler, $logger));
 $router->addRoute('GET', '/api/health', new HealthHandler($database, $http, $config, $logger));
 
-$auth = new Auth($database, $config);
+// Node's libuv pool ran scrypt on 4 threads; match it.
+$auth = new Auth($database, $config, new ContextWorkerPool(4));
 $router->addRoute('GET', '/api/auth/session', new ClosureRequestHandler($auth->session(...)));
 $router->addRoute('POST', '/api/auth/register', new ClosureRequestHandler($auth->register(...)));
 $router->addRoute('POST', '/api/auth/login', new ClosureRequestHandler($auth->login(...)));

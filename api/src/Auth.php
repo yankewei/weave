@@ -8,11 +8,10 @@ use Amp\Http\Cookie\CookieAttributes;
 use Amp\Http\Cookie\ResponseCookie;
 use Amp\Http\Server\Request;
 use Amp\Http\Server\Response;
+use Amp\Parallel\Worker\WorkerPool;
 use Amp\Postgres\PostgresConnectionPool;
 use Amp\Postgres\PostgresExecutor;
 use Amp\Postgres\PostgresQueryError;
-
-use function Amp\Parallel\Worker\submit;
 
 /**
  * Sessions live in Postgres; the browser only holds the HttpOnly cookie and the
@@ -26,8 +25,12 @@ final readonly class Auth
     private const SESSION_AGE = 7 * 24 * 60 * 60;
     private const ATTEMPT_LIMIT = 20;
 
-    public function __construct(private PostgresConnectionPool $database, private Config $config)
-    {
+    // Each derivation holds 32 MiB, so the pool bounds how many run at once.
+    public function __construct(
+        private PostgresConnectionPool $database,
+        private Config $config,
+        private WorkerPool $workers,
+    ) {
     }
 
     public function session(Request $request): Response
@@ -38,9 +41,9 @@ final readonly class Auth
     public function register(Request $request): Response
     {
         $input = self::input(Json::object($request), withProfile: true);
-        $this->limitAttempts($this->clientIp($request));
+        $this->limitAttempts($this->attemptKey($request));
         $salt = bin2hex(random_bytes(16));
-        $key = submit(new DeriveKey($input['password'], $salt))->await();
+        $key = $this->workers->submit(new DeriveKey($input['password'], $salt))->await();
         try {
             [$user, $token] = $this->transaction(function (PostgresExecutor $db) use ($input, $salt, $key): array {
                 $user = self::user($db->execute(
@@ -74,24 +77,26 @@ final readonly class Auth
     public function login(Request $request): Response
     {
         $input = self::input(Json::object($request), withProfile: false);
-        $ip = $this->clientIp($request);
-        $this->limitAttempts($ip);
+        $attemptKey = $this->attemptKey($request);
+        $this->limitAttempts($attemptKey);
         $account = $this->database->execute(
             'SELECT id, name, email, password_hash FROM users WHERE email = $1',
             [$input['email']],
         )->fetchRow();
-        // Derive even for unknown accounts to avoid a fast account-existence oracle.
-        $hash = $account === null ? str_repeat('0', 32) . ':' . str_repeat('0', 128) : self::string($account, 'password_hash');
-        [$salt, $savedKey] = explode(':', $hash, 2) + ['', ''];
-        $key = submit(new DeriveKey($input['password'], $salt))->await();
-        if ($account === null || !hash_equals($savedKey, $key)) {
+        [$salt, $savedKey] = explode(':', $account === null ? '' : self::string($account, 'password_hash'), 2) + ['', ''];
+        // libsodium only takes 32-byte salts, which is what every stored hash has;
+        // anything else fails like an unknown account. Both still derive, so
+        // timing does not reveal which accounts exist.
+        $valid = $account !== null && strlen($salt) === 32 && $savedKey !== '';
+        $key = $this->workers->submit(new DeriveKey($input['password'], $valid ? $salt : str_repeat('0', 32)))->await();
+        if (!$valid || !hash_equals($savedKey, $key)) {
             throw new ApiError(401, '邮箱或密码不正确。');
         }
         $user = self::user($account);
         $token = $this->transaction(fn (PostgresExecutor $db): string => self::createSession($db, $user['id']));
         $this->database->execute(
             'UPDATE auth_attempts SET attempts = attempts - 1 WHERE key = $1 AND attempts > 0',
-            [hash('sha256', $ip)],
+            [$attemptKey],
         );
         $this->revokeSession($request);
 
@@ -129,17 +134,16 @@ final readonly class Auth
         }
     }
 
-    // Budget per IP; the digest keeps addresses out of the table. Every
-    // registration spends it, so one address cannot mass-create accounts.
-    private function limitAttempts(string $ip): void
+    // Every registration spends the budget, so one address cannot mass-create accounts.
+    private function limitAttempts(string $attemptKey): void
     {
-        $row = $this->transaction(function (PostgresExecutor $db) use ($ip): ?array {
+        $row = $this->transaction(function (PostgresExecutor $db) use ($attemptKey): ?array {
             $db->query('DELETE FROM auth_attempts WHERE resets_at < now()');
 
             return $db->execute(
                 "INSERT INTO auth_attempts(key, attempts, resets_at) VALUES($1, 1, now() + interval '15 minutes')
                  ON CONFLICT(key) DO UPDATE SET attempts = auth_attempts.attempts + 1 RETURNING attempts",
-                [hash('sha256', $ip)],
+                [$attemptKey],
             )->fetchRow();
         });
         if (($row['attempts'] ?? 0) > self::ATTEMPT_LIMIT) {
@@ -173,16 +177,19 @@ final readonly class Auth
         return $response;
     }
 
+    // The attempt budget is per client IP; the digest keeps addresses out of the table.
     // nginx appends the address it saw, so only the rightmost entries are
-    // trustworthy; anything to their left came from the client.
-    private function clientIp(Request $request): string
+    // trustworthy; anything to their left came from the client. amphp's Forwarded
+    // attribute is not used: it skips every private-network address as a proxy,
+    // so on a LAN it would pick a client-supplied entry instead.
+    private function attemptKey(Request $request): string
     {
         $entries = array_values(array_filter(array_map(
             trim(...),
             explode(',', $request->getHeader('x-forwarded-for') ?? ''),
         )));
 
-        return $entries[max(0, count($entries) - $this->config->trustedProxyHops)] ?? 'unknown';
+        return hash('sha256', $entries[max(0, count($entries) - $this->config->trustedProxyHops)] ?? 'unknown');
     }
 
     /**

@@ -80,6 +80,19 @@ final class AuthTest extends TestCase
         self::assertSame('旧用户', self::json($response)['name']);
     }
 
+    public function testLoginRejectsMalformedStoredHashes(): void
+    {
+        $email = self::email();
+        $this->server->database->execute(
+            'INSERT INTO users(id, email, name, password_hash) VALUES(gen_random_uuid(), $1, $2, $3)',
+            [$email, '坏数据', 'short-salt:'],
+        );
+
+        $response = $this->post('/api/auth/login', ['email' => $email, 'password' => self::PASSWORD]);
+
+        self::assertError(401, '邮箱或密码不正确。', $response);
+    }
+
     public function testLoginRejectsWrongPasswordsAndUnknownAccountsAlike(): void
     {
         $email = self::email();
