@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Weave\Api;
 
+use Amp\Http\Server\ClientException;
+use Amp\Http\Server\ErrorHandler;
 use Amp\Http\Server\Middleware;
 use Amp\Http\Server\Request;
 use Amp\Http\Server\RequestHandler;
@@ -17,8 +19,11 @@ final readonly class ApiMiddleware implements Middleware
 {
     private const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS'];
 
-    public function __construct(private Config $config, private LoggerInterface $logger)
-    {
+    public function __construct(
+        private Config $config,
+        private ErrorHandler $errorHandler,
+        private LoggerInterface $logger,
+    ) {
     }
 
     public function handleRequest(Request $request, RequestHandler $requestHandler): Response
@@ -26,6 +31,15 @@ final readonly class ApiMiddleware implements Middleware
         try {
             $this->assertSameOrigin($request);
             $response = $requestHandler->handleRequest($request);
+        } catch (ClientException $error) {
+            // Reading the body hit a server limit such as the size cap. The driver
+            // stops parsing and leaves the answer to this handler, so the body
+            // cannot be drained and the connection has to close.
+            $status = $error->getCode() >= 400 && $error->getCode() < 600 ? $error->getCode() : 400;
+            $response = $this->errorHandler->handleError($status, request: $request);
+            $response->setHeader('connection', 'close');
+
+            return $response;
         } catch (ApiError $error) {
             $response = self::error($error->status, $error->getMessage());
         } catch (PostgresQueryError $error) {
