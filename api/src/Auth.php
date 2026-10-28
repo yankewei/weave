@@ -40,8 +40,9 @@ final readonly class Auth
 
     public function register(Request $request): Response
     {
-        $input = self::input(Json::object($request), withProfile: true);
+        // Like legacy, spend the budget before validating so bad payloads are throttled too.
         $this->limitAttempts($this->attemptKey($request));
+        $input = self::input(Json::object($request), withProfile: true);
         $salt = bin2hex(random_bytes(16));
         $key = $this->workers->submit(new DeriveKey($input['password'], $salt))->await();
         try {
@@ -93,7 +94,8 @@ final readonly class Auth
             throw new ApiError(401, '邮箱或密码不正确。');
         }
         $user = self::user($account);
-        $token = $this->transaction(fn (PostgresExecutor $db): string => self::createSession($db, $user['id']));
+        // The cleanup and insert need no atomicity, so skip the BEGIN/COMMIT round trips.
+        $token = self::createSession($this->database, $user['id']);
         $this->database->execute(
             'UPDATE auth_attempts SET attempts = attempts - 1 WHERE key = $1 AND attempts > 0',
             [$attemptKey],
