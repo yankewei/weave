@@ -15,7 +15,7 @@ final class JsonErrorHandler implements ErrorHandler
 {
     public function handleError(int $status, ?string $reason = null, ?Request $request = null): Response
     {
-        $message = match ($status) {
+        return Json::error($status, match ($status) {
             400 => '请求格式不正确。',
             404 => '接口不存在。',
             405 => '不支持这个请求方法。',
@@ -24,10 +24,6 @@ final class JsonErrorHandler implements ErrorHandler
             431 => '请求头过大。',
             503 => '服务暂时不可用，请稍后重试。',
             default => $status < 500 ? '请求无法处理。' : '服务器出错了，请稍后重试。',
-        };
-        $response = Json::response(['statusCode' => $status, 'message' => $message], $status);
-        $response->setHeader('cache-control', 'no-store');
-
-        return $response;
+        });
     }
 }

@@ -18,6 +18,16 @@ final class Json
         );
     }
 
+    // The `{statusCode, message}` body the web client reads, as the legacy API sent
+    // it. Errors describe one request, so they never go into a cache.
+    public static function error(int $status, string $message): Response
+    {
+        $response = self::response(['statusCode' => $status, 'message' => $message], $status);
+        $response->setHeader('cache-control', 'no-store');
+
+        return $response;
+    }
+
     /** @return array<mixed> */
     public static function object(Request $request): array
     {

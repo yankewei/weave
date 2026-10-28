@@ -8,6 +8,8 @@ use PHPUnit\Framework\TestCase;
 
 final class AuthTest extends TestCase
 {
+    use AssertsApiErrors;
+
     private const PASSWORD = 'correct-horse-battery';
 
     private TestServer $server;
@@ -239,12 +241,5 @@ final class AuthTest extends TestCase
 
         /** @var array<string, mixed> $body */
         return $body;
-    }
-
-    private static function assertError(int $status, string $message, TestResponse $response): void
-    {
-        self::assertSame(['statusCode' => $status, 'message' => $message], self::json($response));
-        self::assertSame($status, $response->status);
-        self::assertSame('no-store', $response->header('cache-control'));
     }
 }
