@@ -23,63 +23,67 @@
 
 ## 工程结构
 
-应用是一个 Next.js App Router 全栈项目，页面、接口与数据访问在同一个部署单元内。
+项目正在从 Next.js 全栈迁移到 nginx + AMPHP + Pi Durable 架构，决策见 [ADR 0002](docs/adr/0002-nginx-amphp-pi-durable.md)。前端已经拆成纯静态 SPA；后端按接口逐个从 `legacy` 迁到 `api`，nginx 决定每个 `/api` 路径由谁处理。目前已迁移的只有 `/api/health`。
 
 ```text
-app/                      App Router：页面与 /api Route Handlers
-  api/                    与页面同源的 HTTP 接口
-  workspaces/             工作空间、项目、看板、文档与设置
-  login/                  登录与注册
-components/               页面组件与 shadcn/ui 控件
-  ui/                     shadcn 基础控件
-lib/
-  contracts.ts            Zod 输入输出契约与共享类型
-  services/               事务、权限与 SQL（文档、任务、评论、成员、对话）
-  auth.ts                 会话、密码与限流
-  db.ts                   node-postgres 连接池
+web/                      React SPA（Vite + React Router），nginx 托管构建产物
+  app/                    入口、路由与 loader（会话检查、重定向、成员校验）
+  components/             页面组件与 shadcn/ui 控件
+legacy/                   Next.js Route Handlers 与 lib/services，迁完后删除
+api/                      AMPHP 业务 API（PHP 8.5）
+agent/                    Pi Durable AI 服务（Node 24），只在内网供 api 调用
+nginx/                    唯一对外入口：托管 SPA，分发 /api
 migrations/               按序执行的 PostgreSQL SQL 迁移
-scripts/                  迁移与端到端验证脚本
-docs/                     产品、架构和实现说明
+docs/                     产品、架构和实现说明，ADR 在 docs/adr/
+compose.yaml              一条命令启动全部服务
 ```
 
-服务端渲染的页面直接读取会话与工作空间；交互密集的部分是客户端组件，通过同源的 `/api` 调用 Route Handlers。数据结构与写入规则仍然只有一套：Route Handler 调用 `lib/services`，事务、版本检查、权限与审计都在服务层完成。
+前端只通过同源的 `/api` 访问后端。路由 loader 先确认会话和工作空间成员身份，未登录时跳到 `/login`；交互密集的部分由组件自己请求数据。`legacy` 里 Route Handler 调用 `lib/services`，事务、版本检查、权限与审计都在服务层完成。
 
 ## UI 规范
 
 前端使用 shadcn/ui Nova + Base UI、Tailwind v4 与 Lucide。官方 shadcn skill 已安装在 `.agents/skills/shadcn`，版本来源记录在 `skills-lock.json`。后续 UI 工作遵守 `AGENTS.md` 与 `DESIGN.md`，通过 `components.json` 读取配置。
 
-在仓库根目录执行 `pnpm dlx shadcn@latest info --json` 查看项目配置；先查 `docs` 再从 `@shadcn` 添加组件。页面使用统一主题和组件变体，ESLint 禁止绕过官方控件与使用 `window.confirm`。
+在 `web/` 目录执行 `pnpm dlx shadcn@latest info --json` 查看项目配置；先查 `docs` 再从 `@shadcn` 添加组件。页面使用统一主题和组件变体，ESLint 禁止绕过官方控件与使用 `window.confirm`。
 
 ## 本地启动
 
-使用 Node.js 24 和 pnpm 11，具体版本见根目录 `package.json`。
+需要 Docker。先准备环境变量：
 
 ```sh
-pnpm install
 cp .env.example .env
 ```
 
-将 `.env` 中的 `POSTGRES_PASSWORD` 替换为自己的本地密码，再执行：
+把 `.env` 里的 `POSTGRES_PASSWORD` 换成自己的本地密码，`AGENT_SERVICE_TOKEN` 用 `openssl rand -base64 32` 生成。
+
+### 用 Docker 启动全部服务
 
 ```sh
-pnpm db:up
-pnpm db:migrate
-pnpm dev
+pnpm up
 ```
 
-- 应用地址：http://127.0.0.1:3000，打开后注册账号。
-- 存活检查：http://127.0.0.1:3000/api/health；就绪检查：http://127.0.0.1:3000/api/health/ready，数据库不可用时返回 503。
-- 数据库使用 PostgreSQL 17。首次启动及更新迁移文件后，需要显式运行 `pnpm db:migrate`；应用不会自动修改数据库结构。
-- 若数据库尚未健康，等待后重试迁移命令。
-- 可配置 `DATABASE_URL` 替代 `POSTGRES_*` 连接配置；Compose 仍使用 `POSTGRES_*`。
-- `APP_ORIGIN` 应与浏览器访问地址一致，默认为 `http://127.0.0.1:3000`，不要混用 `localhost`。
-- 页面与接口同源，开发时不需要额外的代理配置。
+- 应用地址：http://localhost:8080（端口由 `WEB_PORT` 决定），打开后注册账号。只有 nginx 和 Postgres 暴露在本机。
+- 健康检查：http://localhost:8080/api/health，由 AMPHP 并发检查数据库和 agent，任一不可用时返回 503。
+- legacy 以生产模式运行，Cookie 带 Secure。请用 `localhost` 访问（浏览器把它视为安全来源），不要用 `127.0.0.1`。
+- 每次 `pnpm up` 都会先由一次性的 `migrate` 服务在容器网络内执行 `migrations/`，legacy 和 api 等它成功后才启动；服务运行中新增迁移文件后，执行 `pnpm db:migrate` 补跑。迁移只作用于 compose 里的数据库，不受本机 5432 端口上其他 Postgres 的影响。
 
-停止本地数据库并保留数据：
+停止并保留数据：
 
 ```sh
-pnpm db:down
+pnpm down
 ```
+
+### 开发前端
+
+后端照常用 Docker 运行，前端用 Vite 开发服务器，`/api` 会代理到 nginx（默认 http://localhost:8080，可用 `API_PROXY_TARGET` 修改）：
+
+```sh
+pnpm install
+pnpm up
+pnpm --filter weave-web dev      # http://localhost:5173
+```
+
+`pnpm --filter weave-legacy db:migrate` 仍可从本机迁移 `.env` 指向的数据库，例如 compose 之外的本机 Postgres。修改 `api/`、`agent/` 或 `legacy/` 后，用 `docker compose up -d --build <服务名>` 重新构建对应服务。也可以在本机直接运行：`pnpm --filter weave-agent dev`，或 `(set -a; . ./.env; php api/bin/server.php)`（需要 PHP 8.5 及 `pcntl`、`pgsql` 扩展，先执行 `composer install --working-dir=api`）。
 
 ## 使用流程
 
@@ -99,14 +103,13 @@ pnpm db:down
 
 ```sh
 pnpm check
-pnpm start
 ```
 
-`check` 包含 ESLint、类型检查、Vitest、Prettier 与构建。`pnpm start` 启动已经构建的生产服务。
+根目录的 `check` 依次检查根目录文档格式、web 与 legacy（ESLint、类型检查、Vitest、Prettier 与构建）、agent（类型检查与 Prettier）和 api（PHPStan 最高级别）。
 
-集成测试使用 `embedded-postgres` 创建临时的真实 PostgreSQL 17 实例，自动迁移并清理，不读取 `.env`、不访问开发数据库，也不依赖 Docker。测试覆盖权限隔离、权限撤销、并发冲突、历史恢复、无变化编辑、事务回滚、历史不可变、任务评论与回复、成员移除等。`scripts/e2e.mjs` 是额外的浏览器级验证：启动生产构建并通过 HTTP 走完注册、项目、文档、任务、评论与页面渲染。
+集成测试使用 `embedded-postgres` 创建临时的真实 PostgreSQL 17 实例，自动迁移并清理，不读取 `.env`、不访问开发数据库，也不依赖 Docker。测试覆盖权限隔离、权限撤销、并发冲突、历史恢复、无变化编辑、事务回滚、历史不可变、任务评论与回复、成员移除等。`legacy/scripts/e2e.mjs`（`pnpm --filter weave-legacy e2e`）是额外的 API 契约验证：启动生产构建并通过 HTTP 走完注册、项目、文档、任务、评论与编号定位，之后也用来验证迁到 AMPHP 的接口。
 
-构建产物位于 `.next`。
+web 的构建产物位于 `web/dist`，legacy 的位于 `legacy/.next`。
 
 ## 部署
 
