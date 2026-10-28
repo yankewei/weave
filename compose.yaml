@@ -41,6 +41,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
       AGENT_URL: http://agent:8090
+      APP_ORIGIN: http://localhost:${WEB_PORT:-8080}
+      TRUSTED_PROXY_HOPS: 1
       AGENT_SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:?Set AGENT_SERVICE_TOKEN in .env}
     depends_on:
       migrate:

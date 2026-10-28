@@ -16,6 +16,8 @@ final readonly class Config
         public string $postgresDatabase,
         public string $agentUrl,
         public string $agentServiceToken,
+        public string $appOrigin,
+        public int $trustedProxyHops,
     ) {
     }
 
@@ -31,6 +33,10 @@ final readonly class Config
             postgresDatabase: self::read('POSTGRES_DB', 'weave'),
             agentUrl: rtrim(self::read('AGENT_URL', 'http://127.0.0.1:8090'), '/'),
             agentServiceToken: self::read('AGENT_SERVICE_TOKEN'),
+            // Empty means write requests must come from the Host they were sent to.
+            appOrigin: self::read('APP_ORIGIN', ''),
+            // Proxies in front of the API that append to X-Forwarded-For (nginx = 1).
+            trustedProxyHops: max(1, (int) self::read('TRUSTED_PROXY_HOPS', '1')),
         );
     }
 

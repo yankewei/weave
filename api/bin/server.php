@@ -8,6 +8,7 @@ use Amp\ByteStream;
 use Amp\Http\Client\HttpClientBuilder;
 use Amp\Http\Server\DefaultErrorHandler;
 use Amp\Http\Server\Middleware\ForwardedHeaderType;
+use Amp\Http\Server\RequestHandler\ClosureRequestHandler;
 use Amp\Http\Server\Router;
 use Amp\Http\Server\SocketHttpServer;
 use Amp\Log\ConsoleFormatter;
@@ -16,6 +17,8 @@ use Amp\Postgres\PostgresConfig;
 use Amp\Postgres\PostgresConnectionPool;
 use Monolog\Logger;
 use Monolog\Processor\PsrLogMessageProcessor;
+use Weave\Api\ApiMiddleware;
+use Weave\Api\Auth;
 use Weave\Api\Config;
 use Weave\Api\HealthHandler;
 
@@ -47,7 +50,14 @@ $server = SocketHttpServer::createForBehindProxy(
 $server->expose("{$config->host}:{$config->port}");
 
 $router = new Router($server, $logger, new DefaultErrorHandler());
+$router->addMiddleware(new ApiMiddleware($config, $logger));
 $router->addRoute('GET', '/api/health', new HealthHandler($database, $http, $config, $logger));
+
+$auth = new Auth($database, $config);
+$router->addRoute('GET', '/api/auth/session', new ClosureRequestHandler($auth->session(...)));
+$router->addRoute('POST', '/api/auth/register', new ClosureRequestHandler($auth->register(...)));
+$router->addRoute('POST', '/api/auth/login', new ClosureRequestHandler($auth->login(...)));
+$router->addRoute('POST', '/api/auth/logout', new ClosureRequestHandler($auth->logout(...)));
 
 $server->start($router, new DefaultErrorHandler());
 
