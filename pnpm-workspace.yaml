@@ -1,4 +1,8 @@
-# pnpm 11 reads build-script permissions from this file even with a single package.
+packages:
+  - web
+  - legacy
+  - agent
+
 allowBuilds:
   '@embedded-postgres/darwin-arm64': true
   '@embedded-postgres/darwin-x64': true
@@ -8,3 +12,8 @@ allowBuilds:
   '@embedded-postgres/linux-ia32': true
   '@embedded-postgres/linux-ppc64': true
   '@embedded-postgres/windows-x64': true
+  '@google/genai': false
+  protobufjs: false
+
+minimumReleaseAgeExclude:
+  - react-router@8.5.1

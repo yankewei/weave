@@ -17,5 +17,11 @@ jobs:
         with:
           node-version-file: .node-version
           cache: pnpm
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: pcntl, pgsql
+          tools: composer:v2
       - run: pnpm install --frozen-lockfile
+      - run: composer install --working-dir=api --no-interaction --no-progress
       - run: pnpm check

@@ -1,0 +1,9 @@
+**/node_modules
+**/.next
+**/vendor
+**/data
+.git
+.env
+.env.*
+!.env.example
+**/dist

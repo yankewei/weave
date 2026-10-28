@@ -1,9 +1,11 @@
 # Weave 前端约束
 
+前端代码位于 `web/`，下文的代码路径（`components/ui`、`app/globals.css` 等）都相对于 `web/`；`DESIGN.md` 与 `.agents/` 仍在仓库根目录。web 是 Vite + React Router 的纯客户端 SPA，只通过同源 `/api` 访问后端，不要引入服务端渲染。整体架构见 `docs/adr/0002-nginx-amphp-pi-durable.md`：`api/` 是 AMPHP 业务 API，`agent/` 是 Pi Durable AI 服务，`legacy/` 是待迁移的 Next Route Handlers。
+
 ## UI 来源与设计
 
 - 所有 UI 工作必须先阅读仓库内的 `.agents/skills/shadcn/SKILL.md`，并遵守 `DESIGN.md`。
-- 在仓库根目录执行 `pnpm dlx shadcn@latest info --json` 获取真实配置。当前使用 Nova、Base UI、Tailwind v4、Lucide；不要混用 Radix 的 `asChild` 或单值 ToggleGroup API。
+- 在 `web/` 目录执行 `pnpm dlx shadcn@latest info --json` 获取真实配置。当前使用 Nova、Base UI、Tailwind v4、Lucide；不要混用 Radix 的 `asChild` 或单值 ToggleGroup API。
 - 优先组合已安装的 `components/ui` 组件。新增组件前执行 `shadcn docs <component>` 并读取文档，再通过官方 `@shadcn` registry 添加。
 - 不重复实现按钮、输入框、弹窗、提示、空状态、导航和加载状态。不得使用 `window.confirm`；复用 `useConfirmation` 与 AlertDialog。
 - 表单使用 FieldGroup、Field、FieldLabel 和官方控件，关联 label/id。错误与禁用状态同时设置在 Field 和控件上。
