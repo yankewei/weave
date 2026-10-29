@@ -10,8 +10,7 @@ final class WorkspacesTest extends TestCase
 {
     use AssertsApiErrors;
     use ReadsApiResponses;
-
-    private const ISO = '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/';
+    use WorkspaceClient;
 
     private TestServer $server;
 
@@ -42,7 +41,7 @@ final class WorkspacesTest extends TestCase
     public function testOverviewSummarisesProjectsDocumentsAndActivity(): void
     {
         [$token, $workspaceId, $userId] = $this->register('工作台空间');
-        $projectId = self::text(self::json($this->request('POST', "/api/workspaces/{$workspaceId}/projects", $token, ['name' => '看板'])), 'id');
+        $projectId = $this->project($token, $workspaceId, '看板');
         $taskId = $this->insertTask($workspaceId, $projectId, $userId, '写测试');
         $documentId = $this->insertDocument($workspaceId, $projectId, $userId);
 
@@ -73,7 +72,7 @@ final class WorkspacesTest extends TestCase
     {
         [$token, $workspaceId, $userId] = $this->register('编号空间');
         [$outsider] = $this->register('外人空间');
-        $projectId = self::text(self::json($this->request('POST', "/api/workspaces/{$workspaceId}/projects", $token, ['name' => '项目'])), 'id');
+        $projectId = $this->project($token, $workspaceId, '项目');
         $taskId = $this->insertTask($workspaceId, $projectId, $userId, '任务');
         $documentId = $this->insertDocument($workspaceId, $projectId, $userId);
 
@@ -95,7 +94,7 @@ final class WorkspacesTest extends TestCase
     {
         [$admin, $workspaceId, $adminId] = $this->register('成员空间');
         [$member, , $memberId, $memberEmail] = $this->register('成员自己的空间');
-        $projectId = self::text(self::json($this->request('POST', "/api/workspaces/{$workspaceId}/projects", $admin, ['name' => '项目'])), 'id');
+        $projectId = $this->project($admin, $workspaceId, '项目');
 
         $invited = $this->request('POST', "/api/workspaces/{$workspaceId}/members", $admin, ['email' => strtoupper($memberEmail)]);
         self::assertSame(201, $invited->status);
@@ -177,33 +176,16 @@ final class WorkspacesTest extends TestCase
         return (string) openssl_decrypt($ciphertext, 'aes-256-gcm', (string) base64_decode(TestServer::STORAGE_KEY), OPENSSL_RAW_DATA, $iv, $tag);
     }
 
-    /** @return array{string, string, string, string} Session token, workspace id, user id and email. */
-    private function register(string $workspaceName): array
-    {
-        $email = 'workspace-' . bin2hex(random_bytes(6)) . '@example.com';
-        $response = $this->request('POST', '/api/auth/register', null, [
-            'email' => $email,
-            'password' => 'correct-horse-battery',
-            'name' => '测试',
-            'workspaceName' => $workspaceName,
-        ], ['x-forwarded-for' => '203.0.113.' . random_int(1, 254) . '-' . bin2hex(random_bytes(4))]);
-        self::assertSame(200, $response->status);
-        $token = self::token($response);
-        $userId = self::text(self::json($response), 'id');
-        $workspaceId = self::text(self::json($this->request('GET', '/api/workspaces', $token)), 0, 'id');
-
-        return [$token, $workspaceId, $userId, $email];
-    }
-
-    // Tasks and documents are still written by legacy, so seed them the way it does.
+    // Seed rows directly so these tests do not depend on the board endpoints.
     private function insertTask(string $workspaceId, string $projectId, string $userId, string $title, ?string $assigneeId = null): string
     {
         $row = $this->server->database->execute(
-            "WITH task AS (
+            "WITH counter AS (
+               UPDATE workspaces SET task_counter = task_counter + 1 WHERE id = $1 RETURNING task_counter
+             ), task AS (
                INSERT INTO tasks(id, workspace_id, project_id, number, title, description, acceptance_criteria,
                  status, priority, assignee_id, position, version, updated_by)
-               VALUES(gen_random_uuid(), $1, $2, (SELECT coalesce(max(number), 0) + 1 FROM tasks WHERE workspace_id = $1),
-                 $3, '', '', 'todo', 'normal', $4, 1024, 1, $5)
+               SELECT gen_random_uuid(), $1, $2, task_counter, $3, '', '', 'todo', 'normal', $4, 1024, 1, $5 FROM counter
                RETURNING *
              )
              INSERT INTO task_events(operation_id, workspace_id, project_id, task_id, version, kind, initiator_id, confirmer_id, after_state)
@@ -230,40 +212,5 @@ final class WorkspacesTest extends TestCase
         )->fetchRow();
 
         return self::text($row, 'document_id');
-    }
-
-    /**
-     * @param non-empty-string $method
-     * @param array<string, mixed>|null $body
-     * @param array<non-empty-string, string> $headers
-     */
-    private function request(string $method, string $path, ?string $token, ?array $body = null, array $headers = []): TestResponse
-    {
-        return $this->server->request($method, $path, $body === null ? null : (string) json_encode($body), [
-            'content-type' => 'application/json',
-            'x-weave-request' => '1',
-            ...($token === null ? [] : ['cookie' => "weave_session={$token}"]),
-            ...$headers,
-        ]);
-    }
-
-    // Walks decoded JSON or a row, failing the test at the first missing level.
-    private static function at(mixed $value, int|string ...$path): mixed
-    {
-        foreach ($path as $key) {
-            self::assertIsArray($value);
-            self::assertArrayHasKey($key, $value);
-            $value = $value[$key];
-        }
-
-        return $value;
-    }
-
-    private static function text(mixed $value, int|string ...$path): string
-    {
-        $value = self::at($value, ...$path);
-        self::assertIsString($value);
-
-        return $value;
     }
 }
