@@ -17,10 +17,7 @@ use Amp\Postgres\PostgresExecutor;
 final readonly class Tasks
 {
     private const MISSING = '任务不存在或无权访问。';
-    private const PROJECT_MISSING = '项目不存在或无权访问。';
     private const STALE = '任务已被其他操作修改。请刷新看板后重试，编辑草稿已保留。';
-    // Lock clause for project(): holds the board and the caller's membership until commit.
-    private const WRITE = 'FOR UPDATE OF p FOR SHARE OF m';
     // The fields the board edits, in the order the task form sends them.
     private const FIELDS = ['title', 'description', 'acceptanceCriteria', 'status', 'priority', 'assigneeId'];
     private const STATUSES = ['todo', 'in_progress', 'done'];
@@ -55,8 +52,8 @@ final readonly class Tasks
     public function list(Request $request): Response
     {
         $user = $this->auth->requireUser($request);
-        $projectId = self::projectId($request);
-        self::project($this->database, $projectId, $user['id']);
+        $projectId = Workspaces::projectId($request);
+        Workspaces::project($this->database, $projectId, $user['id']);
 
         return Json::response([...$this->database->execute(
             'SELECT ' . self::columns() . ' FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id
@@ -69,7 +66,7 @@ final readonly class Tasks
     public function members(Request $request): Response
     {
         $user = $this->auth->requireUser($request);
-        $workspaceId = self::project($this->database, self::projectId($request), $user['id']);
+        $workspaceId = Workspaces::project($this->database, Workspaces::projectId($request), $user['id']);
 
         return Json::response([...$this->database->execute(
             'SELECT u.id, u.name FROM workspace_members m JOIN users u ON u.id = m.user_id
@@ -81,13 +78,13 @@ final readonly class Tasks
     public function create(Request $request): Response
     {
         $user = $this->auth->requireUser($request);
-        $projectId = self::projectId($request);
+        $projectId = Workspaces::projectId($request);
         $payload = Input::json($request, ...self::FIELDS);
         $input = self::fields($payload);
         $payload->check();
 
         return Json::response(Sql::transaction($this->database, function (PostgresExecutor $db) use ($projectId, $user, $input): array {
-            $workspaceId = self::project($db, $projectId, $user['id'], self::WRITE);
+            $workspaceId = Workspaces::project($db, $projectId, $user['id'], 'UPDATE');
             self::checkAssignee($db, $workspaceId, $input['assigneeId']);
             $task = $db->execute(
                 'WITH counter AS (
@@ -205,7 +202,7 @@ final readonly class Tasks
             $db->execute(
                 'SELECT 1 FROM tasks t JOIN projects p ON p.id = t.project_id
                  JOIN workspace_members m ON m.workspace_id = p.workspace_id AND m.user_id = $2
-                 WHERE t.id = $1 ' . self::WRITE,
+                 WHERE t.id = $1 ' . Workspaces::projectLock('UPDATE'),
                 [$taskId, $userId],
             )->fetchRow() ?? throw new ApiError(404, self::MISSING);
             $current = self::read($db, $taskId, $userId);
@@ -267,26 +264,6 @@ final readonly class Tasks
         }
 
         return $updated;
-    }
-
-    /**
-     * The project's workspace, or 404 unless the caller is a member of it.
-     * Creates pass self::WRITE to serialize on the project row.
-     */
-    private static function project(PostgresExecutor $db, string $projectId, string $userId, string $lock = ''): string
-    {
-        $row = $db->execute(
-            "SELECT p.workspace_id FROM projects p JOIN workspace_members m ON m.workspace_id = p.workspace_id
-             WHERE p.id = $1 AND m.user_id = $2 {$lock}",
-            [$projectId, $userId],
-        )->fetchRow() ?? throw new ApiError(404, self::PROJECT_MISSING);
-
-        return Sql::string($row, 'workspace_id');
-    }
-
-    private static function projectId(Request $request): string
-    {
-        return Input::uuid($request, 'projectId', '项目');
     }
 
     /** @return array{title: string, description: string, acceptanceCriteria: string, status: 'todo'|'in_progress'|'done', priority: 'low'|'normal'|'high', assigneeId: ?string} */

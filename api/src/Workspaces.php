@@ -44,6 +44,39 @@ final readonly class Workspaces
         };
     }
 
+    /**
+     * The project's workspace, or 404 unless the caller is a member of it. Writes
+     * pass how to lock the project row; the caller's membership is then held too.
+     *
+     * @param 'SHARE'|'UPDATE'|null $lock
+     */
+    public static function project(PostgresExecutor $db, string $projectId, string $userId, ?string $lock = null): string
+    {
+        $row = $db->execute(
+            "SELECT p.workspace_id FROM projects p JOIN workspace_members m ON m.workspace_id = p.workspace_id
+             WHERE p.id = $1 AND m.user_id = $2 " . ($lock === null ? '' : self::projectLock($lock)),
+            [$projectId, $userId],
+        )->fetchRow() ?? throw new ApiError(404, '项目不存在或无权访问。');
+
+        return Sql::string($row, 'workspace_id');
+    }
+
+    /**
+     * Locks project `p` and holds the caller's membership `m` until commit, for
+     * any query that joins them under those names.
+     *
+     * @param 'SHARE'|'UPDATE' $mode
+     */
+    public static function projectLock(string $mode): string
+    {
+        return "FOR {$mode} OF p FOR SHARE OF m";
+    }
+
+    public static function projectId(Request $request): string
+    {
+        return Input::uuid($request, 'projectId', '项目');
+    }
+
     // Every route under /api/workspaces/{workspaceId} names it the same way.
     public static function id(Request $request): string
     {
