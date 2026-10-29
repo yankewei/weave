@@ -21,6 +21,7 @@ use Weave\Api\ApiMiddleware;
 use Weave\Api\Auth;
 use Weave\Api\Comments;
 use Weave\Api\Config;
+use Weave\Api\Documents;
 use Weave\Api\HealthHandler;
 use Weave\Api\JsonErrorHandler;
 use Weave\Api\Members;
@@ -96,6 +97,14 @@ $comments = new Comments($database, $auth);
 $router->addRoute('GET', '/api/tasks/{taskId}/comments', new ClosureRequestHandler($comments->list(...)));
 $router->addRoute('POST', '/api/tasks/{taskId}/comments', new ClosureRequestHandler($comments->create(...)));
 $router->addRoute('DELETE', '/api/tasks/{taskId}/comments/{commentId}', new ClosureRequestHandler($comments->remove(...)));
+
+$documents = new Documents($database, $auth);
+$router->addRoute('GET', '/api/projects/{projectId}/documents', new ClosureRequestHandler($documents->list(...)));
+$router->addRoute('POST', '/api/projects/{projectId}/documents', new ClosureRequestHandler($documents->create(...)));
+$router->addRoute('GET', '/api/documents/{documentId}', new ClosureRequestHandler($documents->read(...)));
+$router->addRoute('PUT', '/api/documents/{documentId}', new ClosureRequestHandler($documents->update(...)));
+$router->addRoute('POST', '/api/documents/{documentId}/restore', new ClosureRequestHandler($documents->restore(...)));
+$router->addRoute('GET', '/api/documents/{documentId}/revisions', new ClosureRequestHandler($documents->revisions(...)));
 
 $server->start($router, $errorHandler);
 

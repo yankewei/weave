@@ -42,8 +42,8 @@ final class WorkspacesTest extends TestCase
     {
         [$token, $workspaceId, $userId] = $this->register('工作台空间');
         $projectId = $this->project($token, $workspaceId, '看板');
-        $taskId = $this->insertTask($workspaceId, $projectId, $userId, '写测试');
-        $documentId = $this->insertDocument($workspaceId, $projectId, $userId);
+        $taskId = $this->createTask($token, $projectId, '写测试');
+        $documentId = $this->createDocument($token, $projectId);
 
         $overview = self::json($this->request('GET', "/api/workspaces/{$workspaceId}/overview", $token));
 
@@ -73,8 +73,8 @@ final class WorkspacesTest extends TestCase
         [$token, $workspaceId, $userId] = $this->register('编号空间');
         [$outsider] = $this->register('外人空间');
         $projectId = $this->project($token, $workspaceId, '项目');
-        $taskId = $this->insertTask($workspaceId, $projectId, $userId, '任务');
-        $documentId = $this->insertDocument($workspaceId, $projectId, $userId);
+        $taskId = $this->createTask($token, $projectId, '任务');
+        $documentId = $this->createDocument($token, $projectId);
 
         self::assertSame(
             ['path' => "/workspaces/{$workspaceId}/projects/{$projectId}/board?task={$taskId}"],
@@ -107,7 +107,7 @@ final class WorkspacesTest extends TestCase
         self::assertError(403, '只有管理员可以管理成员。', $this->request('DELETE', "/api/workspaces/{$workspaceId}/members/{$adminId}", $member));
         self::assertError(409, '工作空间至少要保留一名管理员。', $this->request('DELETE', "/api/workspaces/{$workspaceId}/members/{$adminId}", $admin));
 
-        $taskId = $this->insertTask($workspaceId, $projectId, $adminId, '交给成员', $memberId);
+        $taskId = $this->createTask($admin, $projectId, '交给成员', $memberId);
         self::assertSame(204, $this->request('DELETE', "/api/workspaces/{$workspaceId}/members/{$memberId}", $admin)->status);
 
         $event = $this->server->database->execute(
@@ -176,41 +176,16 @@ final class WorkspacesTest extends TestCase
         return (string) openssl_decrypt($ciphertext, 'aes-256-gcm', (string) base64_decode(TestServer::STORAGE_KEY), OPENSSL_RAW_DATA, $iv, $tag);
     }
 
-    // Seed rows directly so these tests do not depend on the board endpoints.
-    private function insertTask(string $workspaceId, string $projectId, string $userId, string $title, ?string $assigneeId = null): string
+    private function createTask(string $token, string $projectId, string $title, ?string $assigneeId = null): string
     {
-        $row = $this->server->database->execute(
-            "WITH counter AS (
-               UPDATE workspaces SET task_counter = task_counter + 1 WHERE id = $1 RETURNING task_counter
-             ), task AS (
-               INSERT INTO tasks(id, workspace_id, project_id, number, title, description, acceptance_criteria,
-                 status, priority, assignee_id, position, version, updated_by)
-               SELECT gen_random_uuid(), $1, $2, task_counter, $3, '', '', 'todo', 'normal', $4, 1024, 1, $5 FROM counter
-               RETURNING *
-             )
-             INSERT INTO task_events(operation_id, workspace_id, project_id, task_id, version, kind, initiator_id, confirmer_id, after_state)
-             SELECT gen_random_uuid(), workspace_id, project_id, id, 1, 'create', $5, $5, jsonb_build_object('title', title, 'status', status)
-             FROM task RETURNING task_id",
-            [$workspaceId, $projectId, $title, $assigneeId, $userId],
-        )->fetchRow();
-
-        return self::text($row, 'task_id');
+        return self::text(self::json($this->request('POST', "/api/projects/{$projectId}/tasks", $token, [
+            'title' => $title, 'description' => '', 'acceptanceCriteria' => '', 'status' => 'todo',
+            'priority' => 'normal', 'assigneeId' => $assigneeId,
+        ])), 'id');
     }
 
-    private function insertDocument(string $workspaceId, string $projectId, string $userId): string
+    private function createDocument(string $token, string $projectId): string
     {
-        $row = $this->server->database->execute(
-            "WITH document AS (
-               INSERT INTO documents(id, workspace_id, project_id, number, title, body, version, updated_by)
-               VALUES(gen_random_uuid(), $1, $2, 1, '方案', '', 1, $3)
-               RETURNING *
-             )
-             INSERT INTO document_revisions(operation_id, workspace_id, project_id, document_id, version, kind, title, body, actor_id)
-             SELECT gen_random_uuid(), workspace_id, project_id, id, 1, 'create', title, body, $3 FROM document
-             RETURNING document_id",
-            [$workspaceId, $projectId, $userId],
-        )->fetchRow();
-
-        return self::text($row, 'document_id');
+        return self::text(self::json($this->request('POST', "/api/projects/{$projectId}/documents", $token, ['title' => '方案', 'body' => ''])), 'id');
     }
 }
