@@ -86,6 +86,50 @@ final class Input
         return $email;
     }
 
+    /**
+     * @template T of string
+     * @param non-empty-list<T> $values
+     * @return T
+     */
+    public function choice(string $field, array $values): string
+    {
+        $value = $this->payload[$field] ?? null;
+        if (!in_array($value, $values, true)) {
+            $this->invalid($field, '必须是 ' . implode('、', $values) . ' 之一');
+
+            return $values[0];
+        }
+
+        return $value;
+    }
+
+    public function uuidOrNull(string $field): ?string
+    {
+        $value = $this->payload[$field] ?? null;
+        if (($value === null && $this->has($field)) || (is_string($value) && self::isUuid($value))) {
+            return $value;
+        }
+        $this->invalid($field, '必须是有效的标识或 null');
+
+        return null;
+    }
+
+    public function positiveInt(string $field): int
+    {
+        $value = $this->payload[$field] ?? null;
+        // json_decode reads 2.0 as a float; zod's int() took any whole number.
+        if (is_float($value) && $value === floor($value) && abs($value) <= 2 ** 53) {
+            $value = (int) $value;
+        }
+        if (!is_int($value) || $value < 1) {
+            $this->invalid($field, '必须是正整数');
+
+            return 1;
+        }
+
+        return $value;
+    }
+
     public function invalid(string $field, string $message): void
     {
         $this->issues[] = "{$field}: {$message}";

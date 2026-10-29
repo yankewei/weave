@@ -19,11 +19,13 @@ use Monolog\Logger;
 use Monolog\Processor\PsrLogMessageProcessor;
 use Weave\Api\ApiMiddleware;
 use Weave\Api\Auth;
+use Weave\Api\Comments;
 use Weave\Api\Config;
 use Weave\Api\HealthHandler;
 use Weave\Api\JsonErrorHandler;
 use Weave\Api\Members;
 use Weave\Api\Storage;
+use Weave\Api\Tasks;
 use Weave\Api\Workspaces;
 
 use function Amp\trapSignal;
@@ -81,6 +83,19 @@ $storage = new Storage($database, $auth, $config);
 $router->addRoute('GET', '/api/workspaces/{workspaceId}/storage', new ClosureRequestHandler($storage->read(...)));
 $router->addRoute('PUT', '/api/workspaces/{workspaceId}/storage', new ClosureRequestHandler($storage->save(...)));
 $router->addRoute('DELETE', '/api/workspaces/{workspaceId}/storage', new ClosureRequestHandler($storage->clear(...)));
+
+$tasks = new Tasks($database, $auth);
+$router->addRoute('GET', '/api/projects/{projectId}/tasks', new ClosureRequestHandler($tasks->list(...)));
+$router->addRoute('POST', '/api/projects/{projectId}/tasks', new ClosureRequestHandler($tasks->create(...)));
+$router->addRoute('GET', '/api/projects/{projectId}/members', new ClosureRequestHandler($tasks->members(...)));
+$router->addRoute('PUT', '/api/tasks/{taskId}', new ClosureRequestHandler($tasks->update(...)));
+$router->addRoute('POST', '/api/tasks/{taskId}/move', new ClosureRequestHandler($tasks->move(...)));
+$router->addRoute('GET', '/api/tasks/{taskId}/history', new ClosureRequestHandler($tasks->history(...)));
+
+$comments = new Comments($database, $auth);
+$router->addRoute('GET', '/api/tasks/{taskId}/comments', new ClosureRequestHandler($comments->list(...)));
+$router->addRoute('POST', '/api/tasks/{taskId}/comments', new ClosureRequestHandler($comments->create(...)));
+$router->addRoute('DELETE', '/api/tasks/{taskId}/comments/{commentId}', new ClosureRequestHandler($comments->remove(...)));
 
 $server->start($router, $errorHandler);
 

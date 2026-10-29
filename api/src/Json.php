@@ -14,8 +14,14 @@ final class Json
         return new Response(
             $status,
             ['content-type' => 'application/json'],
-            json_encode($body, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+            self::encode($body),
         );
+    }
+
+    // Also how task_events stores task states, so history reads back what the board was sent.
+    public static function encode(mixed $value): string
+    {
+        return json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
     }
 
     // The `{statusCode, message}` body the web client reads, as the legacy API sent
