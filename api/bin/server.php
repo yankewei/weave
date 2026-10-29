@@ -22,6 +22,9 @@ use Weave\Api\Auth;
 use Weave\Api\Config;
 use Weave\Api\HealthHandler;
 use Weave\Api\JsonErrorHandler;
+use Weave\Api\Members;
+use Weave\Api\Storage;
+use Weave\Api\Workspaces;
 
 use function Amp\trapSignal;
 
@@ -61,6 +64,23 @@ $router->addRoute('GET', '/api/auth/session', new ClosureRequestHandler($auth->s
 $router->addRoute('POST', '/api/auth/register', new ClosureRequestHandler($auth->register(...)));
 $router->addRoute('POST', '/api/auth/login', new ClosureRequestHandler($auth->login(...)));
 $router->addRoute('POST', '/api/auth/logout', new ClosureRequestHandler($auth->logout(...)));
+
+$workspaces = new Workspaces($database, $auth);
+$router->addRoute('GET', '/api/workspaces', new ClosureRequestHandler($workspaces->list(...)));
+$router->addRoute('GET', '/api/workspaces/{workspaceId}/projects', new ClosureRequestHandler($workspaces->projects(...)));
+$router->addRoute('POST', '/api/workspaces/{workspaceId}/projects', new ClosureRequestHandler($workspaces->createProject(...)));
+$router->addRoute('GET', '/api/workspaces/{workspaceId}/overview', new ClosureRequestHandler($workspaces->overview(...)));
+$router->addRoute('GET', '/api/workspaces/{workspaceId}/browse/{key}', new ClosureRequestHandler($workspaces->browse(...)));
+
+$members = new Members($database, $auth);
+$router->addRoute('GET', '/api/workspaces/{workspaceId}/members', new ClosureRequestHandler($members->list(...)));
+$router->addRoute('POST', '/api/workspaces/{workspaceId}/members', new ClosureRequestHandler($members->invite(...)));
+$router->addRoute('DELETE', '/api/workspaces/{workspaceId}/members/{userId}', new ClosureRequestHandler($members->remove(...)));
+
+$storage = new Storage($database, $auth, $config);
+$router->addRoute('GET', '/api/workspaces/{workspaceId}/storage', new ClosureRequestHandler($storage->read(...)));
+$router->addRoute('PUT', '/api/workspaces/{workspaceId}/storage', new ClosureRequestHandler($storage->save(...)));
+$router->addRoute('DELETE', '/api/workspaces/{workspaceId}/storage', new ClosureRequestHandler($storage->clear(...)));
 
 $server->start($router, $errorHandler);
 

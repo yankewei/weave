@@ -21,6 +21,7 @@ use Amp\Postgres\PostgresConnectionPool;
 final class TestServer
 {
     public const ORIGIN = 'http://weave.test';
+    public const STORAGE_KEY = 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
 
     private static ?self $instance = null;
 
@@ -93,6 +94,7 @@ final class TestServer
                 'AGENT_SERVICE_TOKEN' => 'test',
                 'APP_ORIGIN' => self::ORIGIN,
                 'TRUSTED_PROXY_HOPS' => '1',
+                'STORAGE_ENCRYPTION_KEY' => self::STORAGE_KEY,
             ],
         );
         if ($process === false) {

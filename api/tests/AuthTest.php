@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 final class AuthTest extends TestCase
 {
     use AssertsApiErrors;
+    use ReadsApiResponses;
 
     private const PASSWORD = 'correct-horse-battery';
 
@@ -237,22 +238,5 @@ final class AuthTest extends TestCase
     private static function email(): string
     {
         return 'auth-' . bin2hex(random_bytes(6)) . '@example.com';
-    }
-
-    private static function token(TestResponse $response): string
-    {
-        preg_match('/^weave_session=([a-f0-9]{64});/', $response->header('set-cookie'), $match);
-
-        return $match[1] ?? self::fail('Response did not set a session cookie');
-    }
-
-    /** @return array<string, mixed> */
-    private static function json(TestResponse $response): array
-    {
-        $body = json_decode($response->body, true, flags: JSON_THROW_ON_ERROR);
-        self::assertIsArray($body);
-
-        /** @var array<string, mixed> $body */
-        return $body;
     }
 }

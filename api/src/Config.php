@@ -18,6 +18,7 @@ final readonly class Config
         public string $agentServiceToken,
         public string $appOrigin,
         public int $trustedProxyHops,
+        public string $storageEncryptionKey,
     ) {
     }
 
@@ -37,6 +38,8 @@ final readonly class Config
             appOrigin: self::read('APP_ORIGIN', ''),
             // Proxies in front of the API that append to X-Forwarded-For (nginx = 1).
             trustedProxyHops: max(1, (int) self::read('TRUSTED_PROXY_HOPS', '1')),
+            // Only saving workspace storage needs it, and that route answers 503 without it.
+            storageEncryptionKey: self::read('STORAGE_ENCRYPTION_KEY', ''),
         );
     }
 
