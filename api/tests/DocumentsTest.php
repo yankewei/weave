@@ -32,7 +32,7 @@ final class DocumentsTest extends TestCase
         self::assertSame(201, $created->status);
         $document = self::json($created);
         $documentId = self::text($document, 'id');
-        self::assertMatchesRegularExpression(self::ISO, self::text($document, 'updatedAt'));
+        self::assertMatchesRegularExpression(TestServer::ISO, self::text($document, 'updatedAt'));
         self::assertSame(
             ['workspaceId' => $workspaceId, 'projectId' => $projectId, 'number' => 1, 'title' => '方案', 'body' => "第一版\n", 'version' => 1],
             array_diff_key($document, ['id' => 0, 'updatedAt' => 0]),
@@ -58,7 +58,7 @@ final class DocumentsTest extends TestCase
             $revisions,
         ));
         self::assertSame(['测试', "第一版\n"], [self::at($revisions, 0, 'actorName'), self::at($revisions, 0, 'body')]);
-        self::assertMatchesRegularExpression(self::ISO, self::text($revisions, 0, 'createdAt'));
+        self::assertMatchesRegularExpression(TestServer::ISO, self::text($revisions, 0, 'createdAt'));
 
         $audit = [...$this->server->database->execute(
             'SELECT a.before_version, a.after_version, a.method FROM audit_events a

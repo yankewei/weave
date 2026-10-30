@@ -9,6 +9,7 @@ use Amp\Http\Client\HttpClientBuilder;
 use Amp\Http\Client\Request;
 use Amp\Postgres\PostgresConfig;
 use Amp\Postgres\PostgresConnectionPool;
+use Weave\Api\ObjectStore;
 
 /**
  * Runs bin/server.php as a real process against a throwaway schema with every
@@ -22,6 +23,10 @@ final class TestServer
 {
     public const ORIGIN = 'http://weave.test';
     public const STORAGE_KEY = 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
+    // How Sql::iso renders timestamps.
+    public const ISO = '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/';
+    // The server creates it in the RustFS from `pnpm db:up` (or CI) on start.
+    public const S3_BUCKET = 'weave-test';
 
     private static ?self $instance = null;
 
@@ -95,6 +100,10 @@ final class TestServer
                 'APP_ORIGIN' => self::ORIGIN,
                 'TRUSTED_PROXY_HOPS' => '1',
                 'STORAGE_ENCRYPTION_KEY' => self::STORAGE_KEY,
+                'S3_ENDPOINT' => self::s3()['endpoint'],
+                'S3_ACCESS_KEY_ID' => self::s3()['accessKeyId'],
+                'S3_SECRET_ACCESS_KEY' => self::s3()['secretAccessKey'],
+                'S3_BUCKET' => self::S3_BUCKET,
             ],
         );
         if ($process === false) {
@@ -144,6 +153,34 @@ final class TestServer
         fclose($socket);
 
         return (int) substr($address, (int) strrpos($address, ':') + 1);
+    }
+
+    /**
+     * The RustFS the server uses as its default store, which tests also reach directly.
+     *
+     * @return array{endpoint: string, accessKeyId: string, secretAccessKey: string}
+     */
+    public static function s3(): array
+    {
+        return [
+            'endpoint' => self::env('S3_ENDPOINT', 'http://127.0.0.1:9000'),
+            'accessKeyId' => self::env('S3_ACCESS_KEY_ID'),
+            'secretAccessKey' => self::env('S3_SECRET_ACCESS_KEY'),
+        ];
+    }
+
+    public function objectStore(string $bucket): ObjectStore
+    {
+        $s3 = self::s3();
+
+        return new ObjectStore(
+            $this->http,
+            ObjectStore::origin($s3['endpoint']) ?? throw new \RuntimeException('S3_ENDPOINT must be an http(s) origin'),
+            'us-east-1',
+            $bucket,
+            $s3['accessKeyId'],
+            $s3['secretAccessKey'],
+        );
     }
 
     private static function env(string $name, ?string $default = null): string

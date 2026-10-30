@@ -29,6 +29,7 @@ final readonly class ApiMiddleware implements Middleware
 
     public function handleRequest(Request $request, RequestHandler $requestHandler): Response
     {
+        $response = null;
         try {
             $response = $this->respond($request, $requestHandler);
             // amphp stops parsing a keep-alive connection until the body is consumed,
@@ -38,10 +39,11 @@ final readonly class ApiMiddleware implements Middleware
         } catch (ClientException $error) {
             // Reading the body hit a server limit such as the size cap. The driver
             // stops parsing and leaves the answer to this handler, so the rest of
-            // the body is unreadable and the connection has to close. Mirrors the
-            // driver's own Http1Driver::sendErrorResponse, which is private.
+            // the body is unreadable and the connection has to close. A handler that
+            // answered before the body ran out keeps its answer; otherwise this
+            // mirrors the driver's own Http1Driver::sendErrorResponse, which is private.
             $status = $error->getCode();
-            $response = $this->errorHandler->handleError(
+            $response ??= $this->errorHandler->handleError(
                 HttpStatus::isClientError($status) || HttpStatus::isServerError($status) ? $status : 400,
                 request: $request,
             );
@@ -54,6 +56,7 @@ final readonly class ApiMiddleware implements Middleware
         return $response;
     }
 
+    /** @throws ClientException When reading the body hits a server limit; handleRequest answers it. */
     private function respond(Request $request, RequestHandler $requestHandler): Response
     {
         try {

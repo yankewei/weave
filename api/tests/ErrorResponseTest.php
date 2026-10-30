@@ -48,11 +48,13 @@ final class ErrorResponseTest extends TestCase
             'content-type' => 'application/json',
             'x-weave-request' => '1',
         ]);
-        // Rejected before the handler reads it; the middleware's drain hits the cap.
+        // Refused before the body is read: the middleware's drain hits the cap, and
+        // the handler's own answer stands.
         $unread = $this->server->request('POST', '/api/auth/login', self::oversizedBody());
 
         self::assertError(413, '请求内容过大。', $read);
-        self::assertError(413, '请求内容过大。', $unread);
+        self::assertError(403, '请求来源校验失败，请刷新页面后重试。', $unread);
+        self::assertSame('close', $unread->header('connection'));
     }
 
     public function testErrorsBeforeRoutingAnswerWithJson(): void

@@ -146,7 +146,7 @@ export function WorkspaceStorage({
     const accepted = await confirm({
       title: `让${workspaceName}改回默认存储？`,
       description:
-        '之后上传的图片存到 Vercel Blob。已经存在这个 S3 里的图片将无法显示，访问密钥会从服务端删除。',
+        '之后上传的图片存到部署自带的默认存储。已经存在这个 S3 里的图片将无法显示，访问密钥会从服务端删除。',
       confirmLabel: '改回默认存储',
     });
     if (!accepted) return;
@@ -173,13 +173,13 @@ export function WorkspaceStorage({
       <CardHeader>
         <CardTitle>{workspaceName}的存储</CardTitle>
         <CardDescription>
-          图片默认存到 Vercel Blob。填写 S3
+          图片默认存到部署自带的对象存储。填写 S3
           兼容存储后，之后上传的图片改存到这里。图片只有成员可以看到，访问密钥只留在服务端。
         </CardDescription>
         {!loading && !loadFailed && (
           <CardAction>
             <Badge variant={saved ? 'default' : 'secondary'}>
-              {saved ? '自定义 S3' : 'Vercel Blob'}
+              {saved ? '自定义 S3' : '默认存储'}
             </Badge>
           </CardAction>
         )}

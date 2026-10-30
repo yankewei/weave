@@ -19,6 +19,7 @@ use function Amp\async;
 final readonly class Workspaces
 {
     public const MISSING = '工作空间不存在或无权访问。';
+    public const PROJECT_MISSING = '项目不存在或无权访问。';
 
     public function __construct(private PostgresConnectionPool $database, private Auth $auth)
     {
@@ -56,7 +57,7 @@ final readonly class Workspaces
             "SELECT p.workspace_id FROM projects p JOIN workspace_members m ON m.workspace_id = p.workspace_id
              WHERE p.id = $1 AND m.user_id = $2 " . ($lock === null ? '' : self::projectLock($lock)),
             [$projectId, $userId],
-        )->fetchRow() ?? throw new ApiError(404, '项目不存在或无权访问。');
+        )->fetchRow() ?? throw new ApiError(404, self::PROJECT_MISSING);
 
         return Sql::string($row, 'workspace_id');
     }

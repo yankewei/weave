@@ -17,7 +17,7 @@
 - 任务编号 `DEV-n`、文档编号 `DOC-n`，在整个工作空间内递增。对话、评论、任务历史和文档正文里的编号会变成链接；在对话里引用编号，服务端会把对应任务或文档的内容交给模型。
 - 管理员按邮箱邀请已注册成员、查看成员并移除成员；成员可以退出，空间至少保留一名管理员。
 - 根据当前成员关系隔离工作空间数据。
-- 文档正文可以点按钮、粘贴或拖入图片（PNG、JPEG、GIF、WebP，单张不超过 4 MB）。图片默认存到私有的 Vercel Blob；管理员可以在设置里为工作空间改用自己的 S3 兼容存储。图片经 `/api/uploads/:id` 读取，每次校验工作空间成员关系。
+- 文档正文可以点按钮、粘贴或拖入图片（PNG、JPEG、GIF、WebP，单张不超过 4 MB）。图片默认存到部署自带的 S3 兼容存储（compose 里是 RustFS）；管理员可以在设置里为工作空间改用自己的 S3 兼容存储。图片经 `/api/uploads/:id` 读取，每次校验工作空间成员关系。
 
 任务提案目前只创建新任务，不会修改已有任务；修改已有任务仍需手工编辑。文档修改提案、持久化任务队列、邮箱验证与密码重置尚未实现。模型调用在请求内完成，超过 70 秒仍在执行中的记录会在下次访问时标记失败。每个注册账号创建独立工作空间，暂未提供申请加入已有空间的界面。
 
@@ -62,7 +62,7 @@ cp .env.example .env
 pnpm up
 ```
 
-- 应用地址：http://localhost:8080（端口由 `WEB_PORT` 决定），打开后注册账号。只有 nginx 和 Postgres 暴露在本机。
+- 应用地址：http://localhost:8080（端口由 `WEB_PORT` 决定），打开后注册账号。只有 nginx、Postgres 和 RustFS（默认图片存储，端口由 `S3_PORT` 决定）暴露在本机。
 - 健康检查：http://localhost:8080/api/health，由 AMPHP 并发检查数据库和 agent，任一不可用时返回 503。
 - legacy 以生产模式运行，Cookie 带 Secure。请用 `localhost` 访问（浏览器把它视为安全来源），不要用 `127.0.0.1`。
 - 每次 `pnpm up` 都会先由一次性的 `migrate` 服务在容器网络内执行 `migrations/`，legacy 和 api 等它成功后才启动；服务运行中新增迁移文件后，执行 `pnpm db:migrate` 补跑。迁移只作用于 compose 里的数据库，不受本机 5432 端口上其他 Postgres 的影响。
@@ -105,7 +105,7 @@ pnpm --filter weave-web dev      # http://localhost:5173
 pnpm check
 ```
 
-根目录的 `check` 依次检查根目录文档格式、web 与 legacy（ESLint、类型检查、Vitest、Prettier 与构建）、agent（类型检查与 Prettier）和 api（PHPStan 最高级别）。
+根目录的 `check` 依次检查根目录文档格式、web 与 legacy（ESLint、类型检查、Vitest、Prettier 与构建）、agent（类型检查与 Prettier）和 api（PHPStan 最高级别与 PHPUnit）。api 的测试会启动真实的 `bin/server.php`，需要本机的 Postgres 和 RustFS，先执行 `pnpm db:up`。
 
 集成测试使用 `embedded-postgres` 创建临时的真实 PostgreSQL 17 实例，自动迁移并清理，不读取 `.env`、不访问开发数据库，也不依赖 Docker。测试覆盖权限隔离、权限撤销、并发冲突、历史恢复、无变化编辑、事务回滚、历史不可变、任务评论与回复、成员移除等。`legacy/scripts/e2e.mjs`（`pnpm --filter weave-legacy e2e`）是额外的 API 契约验证：启动生产构建并通过 HTTP 走完注册、项目、文档、任务、评论与编号定位，之后也用来验证迁到 AMPHP 的接口。
 
@@ -115,16 +115,20 @@ web 的构建产物位于 `web/dist`，legacy 的位于 `legacy/.next`。
 
 应用可以直接部署到 Vercel：导入仓库即可，Next.js 会被自动识别，无需 `vercel.json`。需要的环境变量：
 
-| 变量                     | 说明                                                                                                           |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`           | 托管 PostgreSQL 连接串，建议使用带 pooler 的地址（Neon、Supabase 等）                                          |
-| `DATABASE_POOL_MAX`      | 每个实例的连接上限，Serverless 环境建议 2–3                                                                    |
-| `APP_ORIGIN`             | 站点地址，例如 `https://weave.example.com`，必须与浏览器地址完全一致                                           |
-| `CMD_API_KEY`            | Command Code 服务端密钥                                                                                        |
-| `CMD_MODEL`              | 可选，默认 `deepseek/deepseek-v4.1-flash`                                                                      |
-| `BLOB_READ_WRITE_TOKEN`  | 默认图片存储使用的私有 Vercel Blob；在 Vercel 关联 Blob 存储后自动注入                                         |
-| `STORAGE_ENCRYPTION_KEY` | 32 字节 base64 密钥，加密工作空间的 S3 访问密钥：`openssl rand -base64 32`                                     |
-| `TRUSTED_PROXY_HOPS`     | 可选，默认 1。应用前面会追加 `X-Forwarded-For` 的代理层数，用于识别登录限流的客户端地址；CDN 加 nginx 时设为 2 |
+| 变量                     | 说明                                                                                                                              |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`           | 托管 PostgreSQL 连接串，建议使用带 pooler 的地址（Neon、Supabase 等）                                                             |
+| `DATABASE_POOL_MAX`      | 每个实例的连接上限，Serverless 环境建议 2–3                                                                                       |
+| `APP_ORIGIN`             | 站点地址，例如 `https://weave.example.com`，必须与浏览器地址完全一致                                                              |
+| `CMD_API_KEY`            | Command Code 服务端密钥                                                                                                           |
+| `CMD_MODEL`              | 可选，默认 `deepseek/deepseek-v4.1-flash`                                                                                         |
+| `S3_ENDPOINT`            | 默认图片存储的 S3 兼容服务地址（ADR 0003）；compose 里默认是自带的 RustFS，其他部署未设置时，没有自定义 S3 的工作空间无法上传图片 |
+| `S3_ACCESS_KEY_ID`       | 默认图片存储的访问密钥 ID；compose 里同时用作 RustFS 的管理员账号                                                                 |
+| `S3_SECRET_ACCESS_KEY`   | 默认图片存储的访问密钥                                                                                                            |
+| `S3_BUCKET`              | 可选，默认 `weave-uploads`，api 启动时自动创建                                                                                    |
+| `S3_REGION`              | 可选，默认 `us-east-1`                                                                                                            |
+| `STORAGE_ENCRYPTION_KEY` | 32 字节 base64 密钥，加密工作空间的 S3 访问密钥：`openssl rand -base64 32`                                                        |
+| `TRUSTED_PROXY_HOPS`     | 可选，默认 1。应用前面会追加 `X-Forwarded-For` 的代理层数，用于识别登录限流的客户端地址；CDN 加 nginx 时设为 2                    |
 
 数据库结构与数据不在构建流程里改动：部署后需要针对生产库执行一次 `DATABASE_URL=... pnpm db:migrate:remote`。首次部署前请确认数据库允许来自 Vercel 的连接，并按实例数收紧连接上限。
 
@@ -136,7 +140,7 @@ web 的构建产物位于 `web/dist`，legacy 的位于 `legacy/.next`。
 - `NODE_ENV=production` 时 Cookie 使用 Secure，需通过 HTTPS 访问。生产反向代理、限流和注册策略仍需部署前细化；当前不提供邮箱验证、密码找回或账号管理。
 - 不要把数据库密码或模型密钥写入任何 `NEXT_PUBLIC_` 变量，它们会被打进浏览器产物。
 - 任务对话通过 Vercel AI SDK（`ai` 与 `@ai-sdk/openai-compatible`）调用 Command Code 的 Chat Completions，使用服务端 `CMD_API_KEY`，可选 `CMD_MODEL`。回复以服务器发送事件流式返回。
-- 图片上传经过应用服务端：校验成员身份、按文件内容识别类型（不接受 SVG），再写入存储。没有配置 S3 的工作空间使用私有 Vercel Blob；配置后，之后的图片写入该 S3（按路径寻址，兼容 AWS S3、Cloudflare R2、MinIO 等）。S3 访问密钥使用 AES-256-GCM 加密保存。图片按工作空间当前的 S3 读取：更换桶或改回默认存储后，已有 S3 图片无法显示。图片在编辑器里直接显示，正文中以 `![名称](/api/uploads/…)` 保存。
+- 图片上传经过应用服务端：校验成员身份、按文件内容识别类型（不接受 SVG），再写入存储。没有配置 S3 的工作空间使用部署的默认存储；配置后，之后的图片写入该 S3（按路径寻址，兼容 AWS S3、Cloudflare R2、RustFS 等）。默认存储同样按当前配置读取：换了默认存储的桶，已有图片无法显示。S3 访问密钥使用 AES-256-GCM 加密保存。图片按工作空间当前的 S3 读取：更换桶或改回默认存储后，已有 S3 图片无法显示。图片在编辑器里直接显示，正文中以 `![名称](/api/uploads/…)` 保存。
 - 迁移文件会记录 SHA-256 校验值；已应用的文件被修改时迁移会失败，应改为新增迁移。
 - `.env`、依赖、构建和覆盖率不会提交；开源许可证见 [LICENSE](LICENSE)。
 

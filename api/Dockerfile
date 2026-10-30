@@ -16,4 +16,4 @@ RUN composer dump-autoload --no-dev --classmap-authoritative
 ENV API_HOST=0.0.0.0 API_PORT=8080
 EXPOSE 8080
 USER www-data
-CMD ["php", "-d", "zend.assertions=-1", "bin/server.php"]
+CMD ["php", "-d", "zend.assertions=-1", "-d", "memory_limit=512M", "bin/server.php"]

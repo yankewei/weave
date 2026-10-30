@@ -7,9 +7,6 @@ namespace Weave\Api\Tests;
 // Signs up fresh accounts and calls the API as them, the way the web client does.
 trait WorkspaceClient
 {
-    // How Sql::iso renders timestamps.
-    private const ISO = '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/';
-
     /** @return array{string, string, string, string} Session token, workspace id, user id and email. */
     private function register(string $workspaceName): array
     {

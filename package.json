@@ -14,7 +14,7 @@
     "format:check": "prettier --check \"*.{md,json,yaml}\" docs .github",
     "up": "docker compose up --build",
     "down": "docker compose down",
-    "db:up": "docker compose up -d postgres",
+    "db:up": "docker compose up -d postgres rustfs",
     "db:down": "docker compose down",
     "db:migrate": "docker compose run --rm --build migrate"
   },

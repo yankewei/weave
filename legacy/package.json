@@ -23,9 +23,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "3.0.69",
-    "@vercel/blob": "2.8.1",
     "ai": "7.0.141",
-    "aws4fetch": "1.0.20",
     "next": "16.4.2",
     "pg": "8.23.1",
     "react": "19.3.1",

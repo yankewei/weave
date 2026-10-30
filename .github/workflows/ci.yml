@@ -10,7 +10,8 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    # The API tests run bin/server.php against a throwaway schema in this database.
+    # The API tests run bin/server.php against a throwaway schema in this database,
+    # with RustFS as the default image store.
     services:
       postgres:
         image: postgres:17
@@ -25,12 +26,27 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      rustfs:
+        image: rustfs/rustfs:1.0.3
+        env:
+          RUSTFS_ACCESS_KEY: weave-ci
+          RUSTFS_SECRET_KEY: weave-ci-secret
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl -sf http://127.0.0.1:9000/health"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: 5432
       POSTGRES_USER: weave
       POSTGRES_PASSWORD: weave
       POSTGRES_DB: weave
+      S3_ENDPOINT: http://127.0.0.1:9000
+      S3_ACCESS_KEY_ID: weave-ci
+      S3_SECRET_ACCESS_KEY: weave-ci-secret
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
