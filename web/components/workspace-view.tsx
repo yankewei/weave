@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useRef,
@@ -31,8 +33,6 @@ import {
   ConversationStarterCards,
   IdeaComposer,
 } from '@/components/conversation-start';
-import { DocumentEditor } from '@/components/document-editor';
-import { TaskBoard } from '@/components/task-board';
 import {
   TaskConversation,
   type TaskConversationHandle,
@@ -71,6 +71,26 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import { useConfirmation } from '@/hooks/use-confirmation';
+
+// Tiptap and dnd-kit are only needed on the document and board views.
+const DocumentEditor = lazy(() =>
+  import('@/components/document-editor').then((module) => ({
+    default: module.DocumentEditor,
+  })),
+);
+const TaskBoard = lazy(() =>
+  import('@/components/task-board').then((module) => ({
+    default: module.TaskBoard,
+  })),
+);
+
+function ViewSkeleton() {
+  return (
+    <div className="p-6" role="status">
+      <Skeleton className="h-96 w-full" />
+    </div>
+  );
+}
 
 export type WorkspaceViewKind =
   'conversation' | 'board' | 'document' | 'settings';
@@ -553,39 +573,41 @@ export function WorkspaceView({
             user={user}
           />
         ) : board && projectId ? (
-          <TaskBoard
-            key={projectId}
-            projectId={projectId}
-            projectName={
-              projects.find((project) => project.id === projectId)?.name ??
-              '项目'
-            }
-            currentUserId={user.id}
-            onDirtyChange={setPageDirty}
-            onBusyChange={setBusy}
-          />
+          <Suspense fallback={<ViewSkeleton />}>
+            <TaskBoard
+              key={projectId}
+              projectId={projectId}
+              projectName={
+                projects.find((project) => project.id === projectId)?.name ??
+                '项目'
+              }
+              currentUserId={user.id}
+              onDirtyChange={setPageDirty}
+              onBusyChange={setBusy}
+            />
+          </Suspense>
         ) : document ? (
-          <DocumentEditor
-            key={document.id}
-            document={document}
-            navigationBusy={busy}
-            onDirtyChange={setPageDirty}
-            onBusyChange={setBusy}
-            onSaved={(updated) => {
-              setLoadedDocument(updated);
-              setDocumentList((current) => ({
-                projectId: current.projectId,
-                documents: current.documents.map((item) =>
-                  item.id === updated.id ? updated : item,
-                ),
-              }));
-            }}
-          />
+          <Suspense fallback={<ViewSkeleton />}>
+            <DocumentEditor
+              key={document.id}
+              document={document}
+              navigationBusy={busy}
+              onDirtyChange={setPageDirty}
+              onBusyChange={setBusy}
+              onSaved={(updated) => {
+                setLoadedDocument(updated);
+                setDocumentList((current) => ({
+                  projectId: current.projectId,
+                  documents: current.documents.map((item) =>
+                    item.id === updated.id ? updated : item,
+                  ),
+                }));
+              }}
+            />
+          </Suspense>
         ) : documentId ? (
           error ? null : (
-            <div className="p-6" role="status">
-              <Skeleton className="h-96 w-full" />
-            </div>
+            <ViewSkeleton />
           )
         ) : projectId ? (
           <Workbench

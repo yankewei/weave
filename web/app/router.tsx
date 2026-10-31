@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import {
   createBrowserRouter,
   isRouteErrorResponse,
@@ -14,11 +15,7 @@ import { AlertCircleIcon, SearchXIcon } from 'lucide-react';
 import { ApiError, api } from '@/lib/api';
 import { userSchema, workspaceSchema } from '@/lib/contracts';
 import { AppShell } from '@/components/app-shell';
-import { AuthScreen } from '@/components/auth-screen';
-import {
-  WorkspaceView,
-  type WorkspaceViewKind,
-} from '@/components/workspace-view';
+import type { WorkspaceViewKind } from '@/components/workspace-view';
 import { Button } from '@/components/ui/button';
 import {
   Empty,
@@ -30,6 +27,18 @@ import {
 } from '@/components/ui/empty';
 import { Spinner } from '@/components/ui/spinner';
 import { TooltipProvider } from '@/components/ui/tooltip';
+
+// Keep the editor and board dependencies (Tiptap, dnd-kit) out of the shell bundle.
+const AuthScreen = lazy(() =>
+  import('@/components/auth-screen').then((module) => ({
+    default: module.AuthScreen,
+  })),
+);
+const WorkspaceView = lazy(() =>
+  import('@/components/workspace-view').then((module) => ({
+    default: module.WorkspaceView,
+  })),
+);
 
 // Loaders take over the guards the server-rendered pages used to run.
 
@@ -174,12 +183,14 @@ function WorkspaceLayout() {
 function WorkspacePage({ view }: { view: WorkspaceViewKind }) {
   const { workspaceId = '', projectId = '', documentId = '' } = useParams();
   return (
-    <WorkspaceView
-      workspaceId={workspaceId}
-      projectId={projectId}
-      documentId={documentId}
-      view={view}
-    />
+    <Suspense fallback={<Loading />}>
+      <WorkspaceView
+        workspaceId={workspaceId}
+        projectId={projectId}
+        documentId={documentId}
+        view={view}
+      />
+    </Suspense>
   );
 }
 
@@ -207,7 +218,15 @@ export const router = createBrowserRouter([
     ErrorBoundary: RouteError,
     children: [
       { path: '/', loader: homeLoader, Component: NoWorkspace },
-      { path: '/login', loader: loginLoader, Component: AuthScreen },
+      {
+        path: '/login',
+        loader: loginLoader,
+        element: (
+          <Suspense fallback={<Loading />}>
+            <AuthScreen />
+          </Suspense>
+        ),
+      },
       {
         path: '/workspaces/:workspaceId',
         loader: workspaceLoader,
