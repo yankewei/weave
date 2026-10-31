@@ -102,7 +102,7 @@ export const workspaceStorageSchema = z.object({
 export const workspaceStorageStateSchema = z.object({
   storage: workspaceStorageSchema.nullable(),
 });
-// Uploads go through the app body limit, so stay below Vercel's 4.5 MB.
+// The API caps images at 4 MB; nginx accepts 5 MB bodies for the multipart overhead.
 export const imageUploadMaxBytes = 4 * 1024 * 1024;
 export const imageUploadTypes = [
   'image/png',

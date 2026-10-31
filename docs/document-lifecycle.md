@@ -26,7 +26,7 @@
 | DELETE /api/workspaces/:id/members/:userId    | 管理员移除成员，或成员退出自己                 |
 | GET /api/workspaces/:id/storage               | 管理员查看工作空间的 S3 存储，不含访问密钥     |
 | PUT /api/workspaces/:id/storage               | 管理员保存工作空间的 S3 存储                   |
-| DELETE /api/workspaces/:id/storage            | 管理员删除 S3 存储，改回默认 Vercel Blob       |
+| DELETE /api/workspaces/:id/storage            | 管理员删除 S3 存储，改回部署的默认存储         |
 | POST /api/projects/:id/uploads                | 上传图片，multipart 字段 file                  |
 | GET /api/uploads/:id                          | 读取图片，校验当前成员关系                     |
 | GET /api/tasks/:id/comments                   | 任务评论与回复，按创建时间排序                 |
@@ -45,7 +45,7 @@
 
 任务评论按当前成员关系校验，非成员返回 404。支持一级回复：回复一条回复返回 400「只能回复一级评论。」只有作者可以删除自己的评论；删除一级评论会通过数据库外键级联删除其回复。评论独立于 `task_events`，不写入不可变的任务变更历史。
 
-图片上传只接受按文件头识别为 PNG、JPEG、GIF 或 WebP 的内容，单张不超过 4 MB，超出返回 413，其他内容返回 400。工作空间没有 S3 存储时写入私有 Vercel Blob（`BLOB_READ_WRITE_TOKEN`），否则写入该 S3，对象键为 `目录/weave/工作空间/图片.扩展名`。对象写入在事务外完成，随后在事务内重新校验项目权限并写入 `uploads`；登记失败时尽力删除刚写入的对象。读取时按当前成员关系校验，非成员返回 404，响应为 `private, max-age=300` 并带 `nosniff` 与沙箱 CSP。S3 图片按工作空间当前存储读取，改回默认存储后返回 404。
+图片上传只接受按文件头识别为 PNG、JPEG、GIF 或 WebP 的内容，单张不超过 4 MB，超出返回 413，其他内容返回 400。工作空间没有 S3 存储时写入部署的默认存储（`S3_ENDPOINT` 等环境变量，见 ADR 0003），否则写入该 S3，对象键为 `目录/weave/工作空间/图片.扩展名`。存储请求不跟随重定向、不重试，同时处理的上传超过 16 个时返回 503。对象写入在事务外完成，随后在事务内重新校验项目权限并写入 `uploads`；登记失败时尽力删除刚写入的对象。读取时按当前成员关系校验，非成员返回 404，响应为 `private, max-age=300` 并带 `nosniff` 与沙箱 CSP。S3 图片按工作空间当前存储读取，改回默认存储后返回 404。
 
 每个工作空间最多一份 S3 存储，只有管理员可以查看和修改，非成员返回 404，成员返回 403「只有管理员可以设置存储。」访问密钥使用 AES-256-GCM 加密后写入数据库，密钥来自服务端 `STORAGE_ENCRYPTION_KEY`；响应不包含访问密钥。首次保存必须提供访问密钥，之后留空表示保留原密钥。
 

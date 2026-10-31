@@ -15,7 +15,7 @@ import { ApiError } from '../http';
 const documentColumns = `d.id, d.workspace_id AS "workspaceId", d.project_id AS "projectId",
   d.number, d.title, d.body, d.version, d.updated_at AS "updatedAt"`;
 
-export async function requireProject(
+async function requireProject(
   client: PoolClient,
   userId: string,
   projectId: string,

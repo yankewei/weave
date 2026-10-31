@@ -53,7 +53,7 @@ final class WorkspacesTest extends TestCase
         ]], $overview['projects']);
         self::assertSame($documentId, self::at($overview, 'documents', 0, 'id'));
         self::assertSame(1, self::at($overview, 'documents', 0, 'version'));
-        self::assertMatchesRegularExpression(self::ISO, self::text($overview, 'documents', 0, 'updatedAt'));
+        self::assertMatchesRegularExpression(TestServer::ISO, self::text($overview, 'documents', 0, 'updatedAt'));
         $activity = self::at($overview, 'activity');
         self::assertIsArray($activity);
         self::assertSame(['document', 'task'], array_column($activity, 'kind'));
@@ -65,7 +65,7 @@ final class WorkspacesTest extends TestCase
             'targetId' => $taskId, 'title' => '写测试', 'taskNumber' => 1, 'taskStatus' => 'todo',
             'fromProposal' => false, 'actorName' => '测试',
         ], $task);
-        self::assertMatchesRegularExpression(self::ISO, self::text($activity, 0, 'createdAt'));
+        self::assertMatchesRegularExpression(TestServer::ISO, self::text($activity, 0, 'createdAt'));
     }
 
     public function testBrowseResolvesKeysForMembers(): void
@@ -120,7 +120,7 @@ final class WorkspacesTest extends TestCase
         $after = json_decode(self::text($event, 'after_state'), true);
         self::assertSame([$memberId, '测试', 1], [self::at($before, 'assigneeId'), self::at($before, 'assigneeName'), self::at($before, 'version')]);
         self::assertSame([null, null, 2, '1024'], [self::at($after, 'assigneeId'), self::at($after, 'assigneeName'), self::at($after, 'version'), self::at($after, 'position')]);
-        self::assertMatchesRegularExpression(self::ISO, self::text($after, 'updatedAt'));
+        self::assertMatchesRegularExpression(TestServer::ISO, self::text($after, 'updatedAt'));
         self::assertError(404, '工作空间不存在或无权访问。', $this->request('GET', "/api/workspaces/{$workspaceId}/members", $member));
     }
 

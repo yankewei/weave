@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Weave\Api;
 
+use Amp\Http\Client\HttpClient;
 use Amp\Http\Server\Request;
 use Amp\Http\Server\Response;
 use Amp\Postgres\PostgresConnectionPool;
@@ -16,14 +17,37 @@ use Amp\Postgres\PostgresExecutor;
 final readonly class Storage
 {
     private const PUBLIC_COLUMNS = 'endpoint, region, bucket, prefix, access_key_id AS "accessKeyId"';
-    // Same envelope as legacy/lib/storage-secret.ts, which still decrypts it for uploads.
+    // Marks the encrypted envelope; older rows hold the plaintext secret.
     private const SECRET_PREFIX = 'v1.';
 
     public function __construct(
         private PostgresConnectionPool $database,
         private Auth $auth,
         private Config $config,
+        private HttpClient $http,
     ) {
+    }
+
+    // What target() reads, for queries that LEFT JOIN workspace_storage as `s`.
+    public const TARGET_COLUMNS = 's.endpoint, s.region, s.bucket, s.prefix, s.access_key_id, s.secret_access_key';
+
+    /**
+     * The workspace's own bucket with its secret decrypted, or null when the row
+     * (TARGET_COLUMNS, possibly all null) says it uses the default store.
+     *
+     * @param array<string, mixed> $row
+     */
+    public function target(array $row): ?ObjectStore
+    {
+        return $row['endpoint'] === null ? null : new ObjectStore(
+            $this->http,
+            Sql::string($row, 'endpoint'),
+            Sql::string($row, 'region'),
+            Sql::string($row, 'bucket'),
+            Sql::string($row, 'access_key_id'),
+            $this->decrypt(Sql::string($row, 'secret_access_key')),
+            Sql::string($row, 'prefix'),
+        );
     }
 
     public function read(Request $request): Response
@@ -111,16 +135,8 @@ final readonly class Storage
     // AES-256-GCM as `v1.<iv>.<tag>.<ciphertext>`, each part unpadded base64url.
     private function encrypt(string $secret): string
     {
-        // Lenient like Node's Buffer.from(…, 'base64'), so keys legacy accepts work here too.
-        $key = base64_decode(strtr($this->config->storageEncryptionKey, '-_', '+/'));
-        if ($key === '') {
-            throw new ApiError(503, '尚未配置 STORAGE_ENCRYPTION_KEY，无法保存存储访问密钥。');
-        }
-        if (strlen($key) !== 32) {
-            throw new ApiError(503, 'STORAGE_ENCRYPTION_KEY 必须是 32 字节的 base64 密钥。');
-        }
         $iv = random_bytes(12);
-        $ciphertext = openssl_encrypt($secret, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+        $ciphertext = openssl_encrypt($secret, 'aes-256-gcm', $this->key(), OPENSSL_RAW_DATA, $iv, $tag);
         if ($ciphertext === false) {
             throw new \RuntimeException('Cannot encrypt the storage secret');
         }
@@ -129,13 +145,42 @@ final readonly class Storage
         return self::SECRET_PREFIX . $encode($iv) . '.' . $encode($tag) . '.' . $encode($ciphertext);
     }
 
+    // Plaintext saved before encryption existed stays readable until the next save.
+    private function decrypt(string $stored): string
+    {
+        if (!str_starts_with($stored, self::SECRET_PREFIX)) {
+            return $stored;
+        }
+        $parts = explode('.', substr($stored, strlen(self::SECRET_PREFIX)));
+        $decode = static fn (string $part): string => sodium_base642bin($part, SODIUM_BASE64_VARIANT_URLSAFE_NO_PADDING);
+        $secret = count($parts) === 3
+            ? openssl_decrypt($decode($parts[2]), 'aes-256-gcm', $this->key(), OPENSSL_RAW_DATA, $decode($parts[0]), $decode($parts[1]))
+            : false;
+
+        return $secret === false ? throw new \UnexpectedValueException('Cannot decrypt the workspace storage secret') : $secret;
+    }
+
+    private function key(): string
+    {
+        // Lenient like Node's Buffer.from(…, 'base64'), so keys the Node app accepted still work.
+        $key = base64_decode(strtr($this->config->storageEncryptionKey, '-_', '+/'));
+        if ($key === '') {
+            throw new ApiError(503, '尚未配置 STORAGE_ENCRYPTION_KEY，无法使用工作空间的 S3 访问密钥。');
+        }
+        if (strlen($key) !== 32) {
+            throw new ApiError(503, 'STORAGE_ENCRYPTION_KEY 必须是 32 字节的 base64 密钥。');
+        }
+
+        return $key;
+    }
+
     /**
      * @return array{endpoint: string, region: string, bucket: string, prefix: string, accessKeyId: string, secretAccessKey: ?string}
      */
     private static function input(Request $request): array
     {
         $payload = Input::json($request, 'endpoint', 'region', 'bucket', 'prefix', 'accessKeyId', 'secretAccessKey');
-        $endpoint = self::origin($payload->text('endpoint', 1, 300));
+        $endpoint = ObjectStore::origin($payload->text('endpoint', 1, 300));
         if ($endpoint === null) {
             $payload->invalid('endpoint', '请填写对象存储的服务地址。');
         }
@@ -169,26 +214,5 @@ final readonly class Storage
             'accessKeyId' => $accessKeyId,
             'secretAccessKey' => $secret !== '' ? $secret : null,
         ];
-    }
-
-    // An http(s) service root without credentials, saved as its WHATWG origin.
-    private static function origin(string $endpoint): ?string
-    {
-        $url = parse_url($endpoint);
-        $scheme = strtolower($url['scheme'] ?? '');
-        if (
-            !in_array($scheme, ['http', 'https'], true)
-            || ($url['host'] ?? '') === ''
-            || isset($url['user']) || isset($url['pass'])
-            || !in_array($url['path'] ?? '/', ['', '/'], true)
-            || ($url['query'] ?? '') !== ''
-            || ($url['fragment'] ?? '') !== ''
-        ) {
-            return null;
-        }
-        $port = $url['port'] ?? null;
-        $defaultPort = $scheme === 'https' ? 443 : 80;
-
-        return "{$scheme}://" . strtolower($url['host']) . ($port === null || $port === $defaultPort ? '' : ":{$port}");
     }
 }

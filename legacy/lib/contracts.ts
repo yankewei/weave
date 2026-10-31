@@ -31,90 +31,6 @@ export const userSchema = z.object({
   email: z.email(),
 });
 export const workspaceSchema = z.object({ id: z.uuid(), name: z.string() });
-const storageEndpointSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(300)
-  .refine(
-    (value) => {
-      try {
-        const url = new URL(value);
-        return (
-          (url.protocol === 'https:' || url.protocol === 'http:') &&
-          url.username === '' &&
-          url.password === '' &&
-          url.pathname === '/' &&
-          url.search === '' &&
-          url.hash === ''
-        );
-      } catch {
-        return false;
-      }
-    },
-    { message: '请填写对象存储的服务地址。' },
-  )
-  .transform((value) => new URL(value).origin);
-export const workspaceStorageInputSchema = z
-  .object({
-    endpoint: storageEndpointSchema,
-    region: z
-      .string()
-      .trim()
-      .regex(/^[A-Za-z0-9-]{1,64}$/, '请填写存储区域。'),
-    bucket: z
-      .string()
-      .trim()
-      .regex(
-        /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/,
-        '桶名需要使用小写字母、数字和连字符。',
-      ),
-    prefix: z
-      .string()
-      .trim()
-      .max(200)
-      .refine(
-        (value) =>
-          value === '' ||
-          (/^[A-Za-z0-9][A-Za-z0-9/_-]*$/.test(value) &&
-            !value.includes('..') &&
-            !value.endsWith('/')),
-        { message: '目录只能包含字母、数字、斜线和连字符。' },
-      ),
-    accessKeyId: z.string().trim().min(1).max(128),
-    secretAccessKey: z
-      .string()
-      .max(256)
-      .optional()
-      .transform((value) => {
-        const trimmed = value?.trim() ?? '';
-        return trimmed.length > 0 ? trimmed : undefined;
-      }),
-  })
-  .strict();
-export const workspaceStorageSchema = z.object({
-  endpoint: z.string(),
-  region: z.string(),
-  bucket: z.string(),
-  prefix: z.string(),
-  accessKeyId: z.string(),
-});
-export const workspaceStorageStateSchema = z.object({
-  storage: workspaceStorageSchema.nullable(),
-});
-// Uploads go through the app body limit, so stay below Vercel's 4.5 MB.
-export const imageUploadMaxBytes = 4 * 1024 * 1024;
-export const imageUploadTypes = [
-  'image/png',
-  'image/jpeg',
-  'image/gif',
-  'image/webp',
-] as const;
-export const uploadSchema = z.object({
-  id: z.uuid(),
-  url: z.string(),
-  fileName: z.string(),
-});
 export const projectInputSchema = z
   .object({ name: z.string().trim().min(1).max(100) })
   .strict();
@@ -156,10 +72,6 @@ export const revisionSchema = documentInputSchema.extend({
 export const documentSummarySchema = documentSchema.omit({ body: true });
 export type User = z.infer<typeof userSchema>;
 export type Workspace = z.infer<typeof workspaceSchema>;
-export type WorkspaceStorage = z.infer<typeof workspaceStorageSchema>;
-export type WorkspaceStorageInput = z.infer<typeof workspaceStorageInputSchema>;
-export type WorkspaceStorageState = z.infer<typeof workspaceStorageStateSchema>;
-export type Upload = z.infer<typeof uploadSchema>;
 export type Project = z.infer<typeof projectSchema>;
 export type Document = z.infer<typeof documentSchema>;
 export type DocumentSummary = z.infer<typeof documentSummarySchema>;

@@ -19,6 +19,11 @@ final readonly class Config
         public string $appOrigin,
         public int $trustedProxyHops,
         public string $storageEncryptionKey,
+        public string $s3Endpoint,
+        public string $s3Region,
+        public string $s3Bucket,
+        public string $s3AccessKeyId,
+        public string $s3SecretAccessKey,
     ) {
     }
 
@@ -38,8 +43,14 @@ final readonly class Config
             appOrigin: self::read('APP_ORIGIN', ''),
             // Proxies in front of the API that append to X-Forwarded-For (nginx = 1).
             trustedProxyHops: max(1, (int) self::read('TRUSTED_PROXY_HOPS', '1')),
-            // Only saving workspace storage needs it, and that route answers 503 without it.
+            // Only workspace S3 needs it, to save and to use the secret; those routes answer 503 without it.
             storageEncryptionKey: self::read('STORAGE_ENCRYPTION_KEY', ''),
+            // The default image store (ADR 0003). Empty leaves only workspace S3 for uploads.
+            s3Endpoint: self::read('S3_ENDPOINT', ''),
+            s3Region: self::read('S3_REGION', 'us-east-1'),
+            s3Bucket: self::read('S3_BUCKET', 'weave-uploads'),
+            s3AccessKeyId: self::read('S3_ACCESS_KEY_ID', ''),
+            s3SecretAccessKey: self::read('S3_SECRET_ACCESS_KEY', ''),
         );
     }
 

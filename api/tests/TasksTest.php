@@ -29,7 +29,7 @@ final class TasksTest extends TestCase
         $created = $this->request('POST', "/api/projects/{$projectId}/tasks", $token, self::input(['title' => ' 写接口 ', 'assigneeId' => $userId]));
         self::assertSame(201, $created->status);
         $task = self::json($created);
-        self::assertMatchesRegularExpression(self::ISO, self::text($task, 'updatedAt'));
+        self::assertMatchesRegularExpression(TestServer::ISO, self::text($task, 'updatedAt'));
         unset($task['id'], $task['updatedAt']);
         self::assertSame([
             'workspaceId' => $workspaceId, 'projectId' => $projectId, 'number' => 1, 'title' => '写接口',
@@ -50,7 +50,7 @@ final class TasksTest extends TestCase
         $history = self::json($this->request('GET', "/api/tasks/{$taskId}/history", $token));
         self::assertSame(['edit', 'create'], array_column($history, 'kind'));
         self::assertSame([2, '测试', null], [self::at($history, 0, 'version'), self::at($history, 0, 'actorName'), self::at($history, 0, 'proposalId')]);
-        self::assertMatchesRegularExpression(self::ISO, self::text($history, 0, 'createdAt'));
+        self::assertMatchesRegularExpression(TestServer::ISO, self::text($history, 0, 'createdAt'));
         self::assertEquals(self::json($created), self::at($history, 0, 'before'));
         self::assertEquals($edited, self::at($history, 0, 'after'));
         self::assertNull(self::at($history, 1, 'before'));
@@ -142,7 +142,7 @@ final class TasksTest extends TestCase
         $created = $this->request('POST', $comments, $admin, ['body' => ' 先看这里 ']);
         self::assertSame(201, $created->status);
         $comment = self::json($created);
-        self::assertMatchesRegularExpression(self::ISO, self::text($comment, 'createdAt'));
+        self::assertMatchesRegularExpression(TestServer::ISO, self::text($comment, 'createdAt'));
         unset($comment['id'], $comment['createdAt']);
         self::assertSame(['taskId' => $taskId, 'parentId' => null, 'authorId' => $adminId, 'authorName' => '测试', 'body' => '先看这里'], $comment);
         $parentId = self::text(self::json($created), 'id');

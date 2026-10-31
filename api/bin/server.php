@@ -25,8 +25,10 @@ use Weave\Api\Documents;
 use Weave\Api\HealthHandler;
 use Weave\Api\JsonErrorHandler;
 use Weave\Api\Members;
+use Weave\Api\ObjectStore;
 use Weave\Api\Storage;
 use Weave\Api\Tasks;
+use Weave\Api\Uploads;
 use Weave\Api\Workspaces;
 
 use function Amp\trapSignal;
@@ -80,7 +82,10 @@ $router->addRoute('GET', '/api/workspaces/{workspaceId}/members', new ClosureReq
 $router->addRoute('POST', '/api/workspaces/{workspaceId}/members', new ClosureRequestHandler($members->invite(...)));
 $router->addRoute('DELETE', '/api/workspaces/{workspaceId}/members/{userId}', new ClosureRequestHandler($members->remove(...)));
 
-$storage = new Storage($database, $auth, $config);
+// Workspace admins choose the endpoints: a redirect must not lead a read off the
+// endpoint or turn a PUT into a GET, and a retry must not multiply the timeouts.
+$storeHttp = (new HttpClientBuilder())->followRedirects(0)->retry(0)->build();
+$storage = new Storage($database, $auth, $config, $storeHttp);
 $router->addRoute('GET', '/api/workspaces/{workspaceId}/storage', new ClosureRequestHandler($storage->read(...)));
 $router->addRoute('PUT', '/api/workspaces/{workspaceId}/storage', new ClosureRequestHandler($storage->save(...)));
 $router->addRoute('DELETE', '/api/workspaces/{workspaceId}/storage', new ClosureRequestHandler($storage->clear(...)));
@@ -105,6 +110,33 @@ $router->addRoute('GET', '/api/documents/{documentId}', new ClosureRequestHandle
 $router->addRoute('PUT', '/api/documents/{documentId}', new ClosureRequestHandler($documents->update(...)));
 $router->addRoute('POST', '/api/documents/{documentId}/restore', new ClosureRequestHandler($documents->restore(...)));
 $router->addRoute('GET', '/api/documents/{documentId}/revisions', new ClosureRequestHandler($documents->revisions(...)));
+
+// The deployment's default image store (ADR 0003).
+$defaultStore = null;
+if ($config->s3Endpoint !== '') {
+    $defaultStore = new ObjectStore(
+        $storeHttp,
+        ObjectStore::origin($config->s3Endpoint) ?? throw new \RuntimeException('S3_ENDPOINT must be an http(s) origin such as http://rustfs:9000'),
+        $config->s3Region,
+        $config->s3Bucket,
+        $config->s3AccessKeyId,
+        $config->s3SecretAccessKey,
+    );
+
+    // Create the bucket before serving, briefly: an unreachable store only warns.
+    try {
+        $status = $defaultStore->createBucket(timeout: 5);
+        if ($status !== 200) {
+            $logger->warning("Default image store answered {$status} when creating bucket {$config->s3Bucket}");
+        }
+    } catch (\Throwable $error) {
+        $logger->warning("Default image store is unreachable: {$error->getMessage()}");
+    }
+}
+
+$uploads = new Uploads($database, $auth, $storage, $defaultStore, $logger);
+$router->addRoute('POST', '/api/projects/{projectId}/uploads', new ClosureRequestHandler($uploads->create(...)));
+$router->addRoute('GET', '/api/uploads/{uploadId}', new ClosureRequestHandler($uploads->read(...)));
 
 $server->start($router, $errorHandler);
 
