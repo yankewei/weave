@@ -17,6 +17,7 @@ final readonly class Config
         public string $agentUrl,
         public string $agentServiceToken,
         public string $appOrigin,
+        public bool $secureCookies,
         public int $trustedProxyHops,
         public string $storageEncryptionKey,
         public string $s3Endpoint,
@@ -40,7 +41,9 @@ final readonly class Config
             agentUrl: rtrim(self::read('AGENT_URL', 'http://127.0.0.1:8090'), '/'),
             agentServiceToken: self::read('AGENT_SERVICE_TOKEN'),
             // Empty means write requests must come from the Host they were sent to.
-            appOrigin: self::read('APP_ORIGIN', ''),
+            appOrigin: $appOrigin = self::read('APP_ORIGIN', ''),
+            // Cookies are Secure on HTTPS; plain-HTTP deployments need this off to keep sessions.
+            secureCookies: self::secureCookies($appOrigin),
             // Proxies in front of the API that append to X-Forwarded-For (nginx = 1).
             trustedProxyHops: max(1, (int) self::read('TRUSTED_PROXY_HOPS', '1')),
             // Only workspace S3 needs it, to save and to use the secret; those routes answer 503 without it.
@@ -52,6 +55,23 @@ final readonly class Config
             s3AccessKeyId: self::read('S3_ACCESS_KEY_ID', ''),
             s3SecretAccessKey: self::read('S3_SECRET_ACCESS_KEY', ''),
         );
+    }
+
+    /**
+     * `COOKIE_SECURE` overrides the scheme of `APP_ORIGIN`; HTTPS and an unset
+     * origin default to Secure, so a missing config never weakens the cookie.
+     */
+    private static function secureCookies(string $appOrigin): bool
+    {
+        $override = strtolower(trim((string) getenv('COOKIE_SECURE')));
+        if (in_array($override, ['1', 'true', 'yes', 'on'], true)) {
+            return true;
+        }
+        if (in_array($override, ['0', 'false', 'no', 'off'], true)) {
+            return false;
+        }
+
+        return !str_starts_with(strtolower($appOrigin), 'http://');
     }
 
     private static function read(string $name, ?string $default = null): string

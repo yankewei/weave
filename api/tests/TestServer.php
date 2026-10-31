@@ -109,6 +109,7 @@ final class TestServer
                 'AGENT_URL' => $agentUrl,
                 'AGENT_SERVICE_TOKEN' => $serviceToken,
                 'APP_ORIGIN' => $origin,
+                'COOKIE_SECURE' => '',
                 'TRUSTED_PROXY_HOPS' => '1',
                 'STORAGE_ENCRYPTION_KEY' => self::STORAGE_KEY,
                 'S3_ENDPOINT' => self::s3()['endpoint'],

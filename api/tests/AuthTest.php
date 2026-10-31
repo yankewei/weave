@@ -39,9 +39,11 @@ final class AuthTest extends TestCase
         self::assertSame(['name' => '注册者', 'email' => $email], ['name' => $user['name'], 'email' => $user['email']]);
         $cookie = $response->header('set-cookie');
         self::assertMatchesRegularExpression('/^weave_session=[a-f0-9]{64};/', $cookie);
-        foreach (['Max-Age=604800', 'Path=/', 'Secure', 'HttpOnly', 'SameSite=Lax'] as $attribute) {
+        foreach (['Max-Age=604800', 'Path=/', 'HttpOnly', 'SameSite=Lax'] as $attribute) {
             self::assertStringContainsString($attribute, $cookie);
         }
+        // The test origin is plain HTTP, so the cookie must stay usable there.
+        self::assertStringNotContainsString('Secure', $cookie);
         $membership = $this->server->database->execute(
             'SELECT w.name, m.role FROM workspace_members m JOIN workspaces w ON w.id = m.workspace_id
              WHERE m.user_id = $1',

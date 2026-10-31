@@ -70,7 +70,7 @@ final readonly class Auth
             throw $error;
         }
 
-        return self::withCookie(Json::response($user), $token);
+        return $this->withCookie(Json::response($user), $token);
     }
 
     // Each login reserves an attempt up front so parallel guesses cannot slip
@@ -102,14 +102,14 @@ final readonly class Auth
         );
         $this->revokeSession($request);
 
-        return self::withCookie(Json::response($user), $token);
+        return $this->withCookie(Json::response($user), $token);
     }
 
     public function logout(Request $request): Response
     {
         $this->revokeSession($request);
 
-        return self::withCookie(new Response(204), null);
+        return $this->withCookie(new Response(204), null);
     }
 
     /** @return User */
@@ -166,12 +166,14 @@ final readonly class Auth
     }
 
     // A null token clears the cookie; amphp drops `Max-Age=0`, so expire it instead.
-    private static function withCookie(Response $response, ?string $token): Response
+    private function withCookie(Response $response, ?string $token): Response
     {
         $attributes = CookieAttributes::default()
             ->withPath('/')
-            ->withSameSite(CookieAttributes::SAMESITE_LAX)
-            ->withSecure();
+            ->withSameSite(CookieAttributes::SAMESITE_LAX);
+        if ($this->config->secureCookies) {
+            $attributes = $attributes->withSecure();
+        }
         $response->setCookie(new ResponseCookie(self::COOKIE, $token ?? '', $token === null
             ? $attributes->withExpiry(new \DateTimeImmutable('@0'))
             : $attributes->withMaxAge(self::SESSION_AGE)));
