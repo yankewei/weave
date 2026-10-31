@@ -5,7 +5,6 @@ export type Binding = {
   workspaceId: string;
   projectId: string;
   ownerId: string;
-  importing: boolean;
 };
 export const Index = defineDoc<{ items: Record<string, Binding> }>({
   kind: 'weave.conversations',
@@ -16,10 +15,6 @@ export const Index = defineDoc<{ items: Record<string, Binding> }>({
 });
 export const State = defineDoc<{
   latestRequestId: string | null;
-  importedCount: number;
-  importDigest: string;
-  importTail: string;
-  sealed: boolean;
 }>({
   kind: 'weave.state',
   version: 1,
@@ -28,10 +23,6 @@ export const State = defineDoc<{
   fork: 'initial',
   initial: () => ({
     latestRequestId: null,
-    importedCount: 0,
-    importDigest: '0'.repeat(64),
-    importTail: '',
-    sealed: true,
   }),
   checkpointWhen: () => true,
 });
@@ -70,27 +61,6 @@ export const Admissions = defineDocFamily<
   initial: (seed) => seed,
   checkpointWhen: () => true,
 });
-export const Batches = defineDocFamily<{ hash: string }, string>({
-  kind: 'weave.import-batch',
-  version: 1,
-  family: true,
-  scope: 'conversation',
-  history: 'latest',
-  fork: 'initial',
-  initial: (hash) => ({ hash }),
-  checkpointWhen: () => true,
-});
-export const ImportedIds = defineDocFamily<{ present: boolean }, boolean>({
-  kind: 'weave.import-id',
-  version: 1,
-  family: true,
-  scope: 'conversation',
-  history: 'latest',
-  fork: 'initial',
-  initial: (present) => ({ present }),
-  checkpointWhen: () => true,
-});
-
 export const Outcomes = defineDocFamily<
   { taskId: number | null; synced: boolean },
   null

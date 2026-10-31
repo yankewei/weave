@@ -50,37 +50,6 @@ export function text(value: unknown, min: number, max: number): string {
   return normalized;
 }
 
-export function importedMessage(value: unknown): Message {
-  const input = object(value, [
-    'id',
-    'authorType',
-    'authorName',
-    'body',
-    'createdAt',
-  ]);
-  if (
-    (input.authorType !== 'user' && input.authorType !== 'assistant') ||
-    (input.authorName !== null && typeof input.authorName !== 'string') ||
-    (typeof input.authorName === 'string' &&
-      [...input.authorName].length > 80) ||
-    typeof input.body !== 'string' ||
-    [...input.body].length < 1 ||
-    [...input.body].length > 8000 ||
-    typeof input.createdAt !== 'string' ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(input.createdAt) ||
-    !Number.isFinite(Date.parse(input.createdAt)) ||
-    new Date(input.createdAt).toISOString() !== input.createdAt
-  )
-    throw new HttpError(400, '历史消息无效。');
-  return {
-    id: uuid(input.id),
-    authorType: input.authorType as Message['authorType'],
-    authorName: input.authorName as string | null,
-    body: input.body,
-    createdAt: input.createdAt,
-  };
-}
-
 export function digest(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }

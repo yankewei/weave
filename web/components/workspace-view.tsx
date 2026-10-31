@@ -726,7 +726,7 @@ export function WorkspaceView({
         >
           <Card className="min-h-0 flex-1 gap-0 overflow-hidden py-0">
             <TaskConversation
-              key={projectId}
+              key={`${user.id}/${projectId}`}
               projectId={projectId}
               projectName={
                 projects.find((project) => project.id === projectId)?.name ??

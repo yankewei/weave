@@ -2,14 +2,16 @@ import {
   forwardRef,
   useCallback,
   useEffect,
-  useImperativeHandle,
   useRef,
+  useImperativeHandle,
   useState,
   type Ref,
 } from 'react';
-import { conversationStateSchema, type Conversation } from '@/lib/contracts';
+import { proposalStateSchema } from '@/lib/contracts';
+import { useCurrentUser } from '@/lib/current-user';
+import { useTaskConversation } from '@/hooks/use-task-conversation';
 import { SparklesIcon } from 'lucide-react';
-import { api, apiEventStream } from '@/lib/api';
+import { api } from '@/lib/api';
 import {
   ConversationStarterCards,
   IdeaComposer,
@@ -77,87 +79,76 @@ export const TaskConversation = forwardRef(function TaskConversation(
   },
   ref: Ref<TaskConversationHandle>,
 ) {
-  const [conversation, setConversation] = useState<Conversation | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [sending, setSending] = useState(false);
-  const [draft, setDraft] = useState('');
-  const [pendingUser, setPendingUser] = useState('');
-  const [streamReply, setStreamReply] = useState('');
+  const user = useCurrentUser();
+  const {
+    draft,
+    setDraft,
+    unavailable,
+    conversation,
+    loading,
+    sending: posting,
+    error,
+    setError,
+    reconnecting,
+    retryInput,
+    send,
+    refresh,
+    loadEarlier,
+    paging,
+  } = useTaskConversation(projectId, user.id);
   const [resolving, setResolving] = useState(false);
-  const [error, setError] = useState('');
-  const [reload, setReload] = useState(0);
-  const sendAbort = useRef<AbortController | null>(null);
   const { confirm, confirmationDialog } = useConfirmation();
   const pending = conversation?.proposal?.status === 'pending';
-  const busy = sending || resolving;
+  const run = conversation?.run;
+  const generating =
+    !!run &&
+    (run.status === 'accepting' ||
+      run.status === 'running' ||
+      run.syncStatus === 'pending');
+  const sending = posting || generating;
+  const busy = sending || resolving || unavailable;
   const page = placement === 'page';
   const produced =
     conversation?.proposal?.status === 'applied'
       ? conversation.proposal.items
       : [];
-
+  const pendingUser =
+    retryInput &&
+    !(
+      run?.requestId === retryInput.requestId &&
+      run.status !== 'accepting' &&
+      run.inputStatus !== 'closed'
+    )
+      ? retryInput.body
+      : '';
+  const streamReply = run?.status === 'running' ? run.reply : '';
+  const notified = useRef('');
+  const proposalKey = conversation?.proposal
+    ? `${conversation.proposal.id}/${conversation.proposal.status}`
+    : '';
   useEffect(() => {
-    const controller = new AbortController();
-    api(`/projects/${projectId}/conversation`, conversationStateSchema, {
-      signal: controller.signal,
-    })
-      .then((state) => setConversation(state.conversation))
-      .catch((caught: unknown) => {
-        if (!controller.signal.aborted)
-          setError(caught instanceof Error ? caught.message : '对话加载失败。');
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-    return () => controller.abort();
-  }, [projectId, reload]);
-
-  useEffect(() => () => sendAbort.current?.abort(), []);
-
+    if (proposalKey && proposalKey !== notified.current) {
+      notified.current = proposalKey;
+      onStateChange?.();
+    }
+  }, [proposalKey, onStateChange]);
   const submitBody = useCallback(
     async (body: string) => {
-      const trimmed = body.trim();
-      if (!trimmed || busy || pending || loading) return;
-      const abort = new AbortController();
-      sendAbort.current = abort;
-      setSending(true);
-      setPendingUser(trimmed);
-      setStreamReply('');
-      setError('');
-      try {
-        const state = conversationStateSchema.parse(
-          await apiEventStream(`/projects/${projectId}/conversation/messages`, {
-            body: JSON.stringify({ body: trimmed }),
-            timeoutMs: 70_000,
-            signal: abort.signal,
-            onReply: setStreamReply,
-          }),
-        );
-        setConversation(state.conversation);
-        onStateChange?.();
-        setPendingUser('');
-        setStreamReply('');
-        setDraft('');
-      } catch (caught) {
-        if (abort.signal.aborted) return;
-        setError(caught instanceof Error ? caught.message : '生成提案失败。');
-        setReload((value) => value + 1);
-      } finally {
-        if (!abort.signal.aborted) setSending(false);
-      }
+      if (busy || pending || loading || retryInput) return;
+      await send(body);
     },
-    [busy, loading, onStateChange, pending, projectId],
+    [busy, pending, loading, retryInput, send],
   );
 
   useImperativeHandle(
     ref,
     () => ({
-      ready: !loading,
+      ready: !loading && !busy && !pending && !retryInput,
       submit(body: string) {
         void submitBody(body);
       },
     }),
-    [loading, submitBody],
+    [loading, busy, pending, retryInput, submitBody],
   );
 
   async function resolve(decision: 'confirm' | 'reject') {
@@ -175,17 +166,11 @@ export const TaskConversation = forwardRef(function TaskConversation(
     setResolving(true);
     setError('');
     try {
-      const state = conversationStateSchema.parse(
-        await api(
-          `/proposals/${proposal.id}/${decision}`,
-          conversationStateSchema,
-          {
-            method: 'POST',
-            timeoutMs: 30_000,
-          },
-        ),
-      );
-      setConversation(state.conversation);
+      await api(`/proposals/${proposal.id}/${decision}`, proposalStateSchema, {
+        method: 'POST',
+        timeoutMs: 30_000,
+      });
+      refresh();
       onStateChange?.();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '处理提案失败。');
@@ -195,7 +180,11 @@ export const TaskConversation = forwardRef(function TaskConversation(
   }
 
   const showStarter =
-    page && !loading && !sending && !conversation?.messages.length;
+    page &&
+    !loading &&
+    !sending &&
+    !retryInput &&
+    !conversation?.messages.length;
   const composer = (
     <IdeaComposer
       id="conversation-body"
@@ -204,7 +193,7 @@ export const TaskConversation = forwardRef(function TaskConversation(
       onSubmit={() => {
         void submitBody(draft);
       }}
-      disabled={busy || loading}
+      disabled={busy || loading || !!retryInput}
       pending={pending}
       sending={sending}
       large={showStarter}
@@ -258,6 +247,33 @@ export const TaskConversation = forwardRef(function TaskConversation(
           </Alert>
         </div>
       ) : null}
+      {reconnecting || retryInput || run?.status === 'failed' ? (
+        <div
+          className="flex shrink-0 flex-wrap items-center gap-2 px-4 py-3"
+          role="status"
+        >
+          {reconnecting ? <p>连接中断，正在自动恢复…</p> : null}
+          {run?.status === 'failed' ? (
+            <p>{run.message ?? '生成失败，请重新发送。'}</p>
+          ) : null}
+          {retryInput ? (
+            <>
+              <p>这条消息的接收结果尚未确认。</p>
+              <Button
+                variant="outline"
+                disabled={posting || unavailable}
+                onClick={() => {
+                  void send(retryInput.body, true).then((accepted) => {
+                    if (accepted) setDraft('');
+                  });
+                }}
+              >
+                用原消息重试
+              </Button>
+            </>
+          ) : null}
+        </div>
+      ) : null}
       {showStarter ? (
         <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center gap-8 overflow-y-auto px-6 py-12">
           <div className="flex flex-col gap-3">
@@ -270,7 +286,7 @@ export const TaskConversation = forwardRef(function TaskConversation(
           </div>
           {composer}
           <ConversationStarterCards
-            disabled={busy || loading}
+            disabled={busy || loading || !!retryInput}
             onPick={(body) => {
               void submitBody(body);
             }}
@@ -309,6 +325,20 @@ export const TaskConversation = forwardRef(function TaskConversation(
                           </EmptyDescription>
                         </EmptyHeader>
                       </Empty>
+                    </MessageScrollerItem>
+                  ) : null}
+                  {conversation?.nextCursor ? (
+                    <MessageScrollerItem messageId="earlier">
+                      <Button
+                        variant="ghost"
+                        disabled={paging}
+                        onClick={() => {
+                          void loadEarlier();
+                        }}
+                      >
+                        {paging ? <Spinner data-icon="inline-start" /> : null}
+                        加载更早消息
+                      </Button>
                     </MessageScrollerItem>
                   ) : null}
                   {conversation?.messages.map((message) => (
@@ -426,7 +456,7 @@ export const TaskConversation = forwardRef(function TaskConversation(
                       </Card>
                     </MessageScrollerItem>
                   ) : null}
-                  {sending && pendingUser ? (
+                  {pendingUser ? (
                     <MessageScrollerItem messageId="pending-user" scrollAnchor>
                       <Message align="end">
                         <MessageContent>
@@ -454,7 +484,11 @@ export const TaskConversation = forwardRef(function TaskConversation(
                           ) : null}
                           <Marker>
                             <MarkerContent>
-                              正在生成提案，任务尚未创建。
+                              {run?.syncStatus === 'pending' &&
+                              (run.status === 'succeeded' ||
+                                run.status === 'failed')
+                                ? '生成已结束，正在同步结果…'
+                                : '正在生成提案，任务尚未创建。'}
                             </MarkerContent>
                           </Marker>
                         </MessageContent>

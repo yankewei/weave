@@ -21,8 +21,6 @@ import {
   State,
   Inputs,
   Admissions,
-  Batches,
-  ImportedIds,
   type Binding,
   type Input,
 } from './state.ts';
@@ -33,7 +31,6 @@ import {
   digest,
   encodeCursor,
   HttpError,
-  importedMessage,
   object,
   text,
   uuid,
@@ -42,7 +39,6 @@ import {
 
 export class Conversations {
   readonly harness: Harness;
-  readonly mode: 'serve' | 'import';
   private readonly secret: string;
   private readonly ready: boolean;
   private readonly agent: AgentChange;
@@ -52,14 +48,13 @@ export class Conversations {
 
   private constructor(
     harness: Harness,
-    options: { secret: string; mode: 'serve' | 'import' },
+    options: { secret: string },
     config: ReturnType<typeof commandCodeModels>,
     extension: ReturnType<typeof businessTools> | undefined,
     outcome: ReturnType<typeof outcomeTask> | undefined,
   ) {
     this.harness = harness;
     this.secret = options.secret;
-    this.mode = options.mode;
     this.ready = config.ready;
     this.outcome = outcome;
     this.modelId = config.model.modelId;
@@ -72,10 +67,7 @@ export class Conversations {
     };
   }
 
-  static async open(
-    path: string,
-    options: { secret: string; mode: 'serve' | 'import' },
-  ) {
+  static async open(path: string, options: { secret: string }) {
     const config = commandCodeModels();
     const extension = process.env.AGENT_API_URL
       ? businessTools(process.env.AGENT_API_URL, options.secret)
@@ -110,13 +102,12 @@ export class Conversations {
       outcome,
     );
     try {
-      // Import mode must never run previously pending work or call a model.
-      if (options.mode === 'serve' && config.ready) {
+      if (config.ready) {
         const index = await harness.snapshot(Index, context);
         for (const [id, binding] of Object.entries(index?.items ?? {})) {
           const conversation = await runtime.conversation(id, binding);
           const state = await harness.snapshot(State, conversation.id, context);
-          if (!state?.latestRequestId || !state.sealed) continue;
+          if (!state?.latestRequestId) continue;
           const input = await harness.snapshot(
             Inputs,
             conversation.id,
@@ -189,19 +180,11 @@ export class Conversations {
   }
 
   async create(id: string, value: unknown) {
-    const input = object(value, [
-      'workspaceId',
-      'projectId',
-      'ownerId',
-      'importing',
-    ]);
-    if (input.importing !== undefined && typeof input.importing !== 'boolean')
-      throw new HttpError(400, '导入模式无效。');
+    const input = object(value, ['workspaceId', 'projectId', 'ownerId']);
     const binding = {
       workspaceId: uuid(input.workspaceId),
       projectId: uuid(input.projectId),
       ownerId: uuid(input.ownerId),
-      importing: input.importing === true,
     };
     return this.exclusive(id, async () => {
       const existing = (await this.harness.snapshot(Index, context))?.items[id];
@@ -212,27 +195,11 @@ export class Conversations {
           existing.ownerId !== binding.ownerId
         )
           throw new HttpError(409, '对话归属不一致。');
-        if (existing.importing !== binding.importing) {
-          const state = await this.harness.snapshot(
-            State,
-            existing.agentConversationId as ConversationId,
-            context,
-          );
-          if (!(
-            this.mode === 'serve' &&
-            existing.importing &&
-            !binding.importing &&
-            state?.sealed
-          ))
-            throw new HttpError(409, '对话导入模式不一致。');
-        }
         return {
           conversationId: id,
           agentConversationId: existing.agentConversationId,
         };
       }
-      if (binding.importing !== (this.mode === 'import'))
-        throw new HttpError(409, '当前服务模式不允许创建此对话。');
       const conversation = await this.harness.createConversation(
         {
           ownership: { kind: 'ownerless' },
@@ -242,7 +209,7 @@ export class Conversations {
               ...binding,
               agentConversationId: conversationId,
             };
-            (await tx.doc(State, conversationId)).sealed = !binding.importing;
+            await tx.doc(State, conversationId);
           },
         },
         context,
@@ -306,8 +273,6 @@ export class Conversations {
       messageId: randomUUID(),
       createdAt: new Date().toISOString(),
     };
-    if (this.mode !== 'serve')
-      throw new HttpError(409, '导入模式不能生成回复。');
     return this.exclusive(id, async () => {
       const conversation = await this.conversation(id);
       const state = await this.harness.snapshot(
@@ -315,7 +280,7 @@ export class Conversations {
         conversation.id,
         context,
       );
-      if (!state?.sealed) throw new HttpError(409, '历史导入尚未完成。');
+      if (!state) throw new Error('Missing conversation state');
       const previous = await this.harness.snapshot(
         Inputs,
         conversation.id,
@@ -612,129 +577,9 @@ export class Conversations {
     const conversation = await this.conversation(id);
     return conversation.watch(context);
   }
-
-  async importBatch(id: string, value: unknown) {
-    if (this.mode !== 'import')
-      throw new HttpError(409, '导入接口仅在导入模式可用。');
-    const payload = object(value, ['batchId', 'offset', 'messages']);
-    const batchId = uuid(payload.batchId);
-    if (
-      !Number.isSafeInteger(payload.offset) ||
-      (payload.offset as number) < 0 ||
-      !Array.isArray(payload.messages) ||
-      payload.messages.length < 1 ||
-      payload.messages.length > 100
-    )
-      throw new HttpError(400, '导入批次无效。');
-    const messages = payload.messages.map(importedMessage);
-    const hash = digest(JSON.stringify({ offset: payload.offset, messages }));
-    return this.exclusive(id, async () => {
-      const binding = await this.binding(id);
-      if (!binding.importing)
-        throw new HttpError(409, '此对话不接受历史导入。');
-      const conversation = await this.conversation(id, binding);
-      const batch = await this.harness.snapshot(
-        Batches,
-        conversation.id,
-        batchId,
-        context,
-      );
-      if (batch) {
-        if (batch.hash !== hash)
-          throw new HttpError(409, '导入批次内容不一致。');
-        const state = await this.harness.snapshot(
-          State,
-          conversation.id,
-          context,
-        );
-        return { count: state!.importedCount, digest: state!.importDigest };
-      }
-      return conversation.commit(async (tx) => {
-        const state = await tx.doc(State, conversation.id);
-        if (state.sealed || state.importedCount !== payload.offset)
-          throw new HttpError(409, '导入已完成或批次位置不一致。');
-        // Read all uniqueness documents before appending any table record (Pi's read-before-write rule).
-        let tail = state.importTail;
-        const seen = new Set<string>();
-        for (const message of messages) {
-          const key = `${message.createdAt}/${message.id}`;
-          const exists = await tx.doc(
-            ImportedIds,
-            conversation.id,
-            message.id,
-            false,
-          );
-          if (exists.present || seen.has(message.id) || key <= tail)
-            throw new HttpError(409, '历史消息重复或顺序无效。');
-          exists.present = true;
-          seen.add(message.id);
-          tail = key;
-        }
-        for (const message of messages) {
-          await tx.appendEntry(conversation.id, {
-            kind: 'weave.imported',
-            data: message,
-            model: [
-              message.authorType === 'user'
-                ? {
-                    role: 'user',
-                    content: message.body,
-                    timestamp: Date.parse(message.createdAt),
-                  }
-                : {
-                    role: 'assistant',
-                    content: [{ type: 'text', text: message.body }],
-                    ...assistantFields(Date.parse(message.createdAt)),
-                  },
-            ],
-          });
-          state.importDigest = digest(
-            `${state.importDigest}\n${JSON.stringify(message)}`,
-          );
-        }
-        state.importedCount += messages.length;
-        state.importTail = tail;
-        await tx.doc(Batches, conversation.id, batchId, hash);
-        return { count: state.importedCount, digest: state.importDigest };
-      }, context);
-    });
-  }
-
-  async completeImport(id: string, value: unknown) {
-    if (this.mode !== 'import')
-      throw new HttpError(409, '导入接口仅在导入模式可用。');
-    const payload = object(value, ['count', 'digest']);
-    if (
-      !Number.isSafeInteger(payload.count) ||
-      (payload.count as number) < 0 ||
-      typeof payload.digest !== 'string' ||
-      !/^[0-9a-f]{64}$/.test(payload.digest)
-    )
-      throw new HttpError(400, '导入校验无效。');
-    return this.exclusive(id, async () => {
-      if (!(await this.binding(id)).importing)
-        throw new HttpError(409, '此对话不接受历史导入。');
-      const conversation = await this.conversation(id);
-      return conversation.commit(async (tx) => {
-        const state = await tx.doc(State, conversation.id);
-        if (
-          state.importedCount !== payload.count ||
-          state.importDigest !== payload.digest
-        )
-          throw new HttpError(409, '历史数量或摘要不一致。');
-        state.sealed = true;
-        return {
-          count: state.importedCount,
-          digest: state.importDigest,
-          status: 'complete',
-        };
-      }, context);
-    });
-  }
 }
 
 function projectMessage(entry: EntryRecord): Message | null {
-  if (entry.kind === 'weave.imported') return entry.data as Message;
   if (entry.kind === 'weave.user') {
     const data = entry.data as {
       id: string;
@@ -783,23 +628,5 @@ function projectMessage(entry: EntryRecord): Message | null {
     authorName: null,
     body,
     createdAt: new Date(message.timestamp).toISOString(),
-  };
-}
-
-function assistantFields(timestamp: number) {
-  return {
-    api: 'openai-completions' as const,
-    provider: 'legacy',
-    model: 'imported',
-    timestamp,
-    stopReason: 'stop' as const,
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
   };
 }

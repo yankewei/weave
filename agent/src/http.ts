@@ -120,11 +120,7 @@ export function agentServer(runtime: Conversations, serviceToken: string) {
       } else if (request.method === 'GET' && suffix === '/events') {
         await stream(id, response);
         return;
-      } else if (request.method === 'PUT' && suffix === '/import')
-        result = await runtime.importBatch(id, await body(request));
-      else if (request.method === 'PUT' && suffix === '/import/complete')
-        result = await runtime.completeImport(id, await body(request));
-      else throw new HttpError(404, '接口不存在。');
+      } else throw new HttpError(404, '接口不存在。');
     }
     response
       .writeHead(status, {

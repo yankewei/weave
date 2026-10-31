@@ -23,9 +23,9 @@
 
 ## 工程结构
 
-项目正在从 Next.js 全栈迁移到 nginx + AMPHP + Pi Durable 架构，决策见 [ADR 0002](docs/adr/0002-nginx-amphp-pi-durable.md)。前端已经拆成纯静态 SPA；健康检查、认证、工作空间与成员、项目、任务与评论、文档、图片上传和存储设置已迁到 `api`。nginx 默认将 `/api` 转给 PHP，对话、提案确认与拒绝、`/api/health/ready` 仍交给 `legacy`。下一阶段的接口与数据切换方案见[对话与提案迁移契约](docs/conversation-migration.md)。
+当前运行架构为 nginx + AMPHP + Pi Durable，见 [ADR 0002](docs/adr/0002-nginx-amphp-pi-durable.md)。前端是纯客户端 SPA，所有同源 `/api` 请求均由 PHP 处理。默认 compose 不运行 legacy；其迁移脚本、测试和旧源码留待下一阶段清理。
 
-agent 已提供内网持久对话、输入去重、SSE 快照与历史导入接口，使用 SQLite 保存状态；浏览器尚未切换。模型配置由 agent 读取 `CMD_API_KEY` / `CMD_MODEL`。项目资料、编号引用和提案工具，以及 PHP 的提案处理、私有对话入口、接收协调与 SSE 转发已实现；执行终态由 agent 的持久任务重试回写 PHP。下一阶段实施历史导入、前端适配与路由切换。断线重连恢复最新快照，不逐条重放流事件，见 [ADR 0004](docs/adr/0004-conversation-reconnect-uses-snapshots.md)。
+agent 使用 SQLite 保存私有对话、输入凭据和执行检查点，读取 `CMD_API_KEY` / `CMD_MODEL`，通过 PHP 内网工具读取资料并提交待确认提案。刷新恢复执行，断线重连恢复最新快照，见 [ADR 0004](docs/adr/0004-conversation-reconnect-uses-snapshots.md)。本项目没有历史导入要求，当前契约见[对话与提案契约](docs/conversation-migration.md)，详细实施计划见[直接切换计划](docs/conversation-cutover.md)。
 
 ```text
 web/                      React SPA（Vite + React Router），nginx 托管构建产物
@@ -40,7 +40,7 @@ docs/                     产品、架构和实现说明，ADR 在 docs/adr/
 compose.yaml              一条命令启动全部服务
 ```
 
-前端只通过同源的 `/api` 访问后端。路由 loader 先确认会话和工作空间成员身份，未登录时跳到 `/login`；交互密集的部分由组件自己请求数据。`legacy` 里 Route Handler 调用 `lib/services`，事务、版本检查、权限与审计都在服务层完成。
+前端只通过同源的 `/api` 访问后端。路由 loader 先确认会话和工作空间成员身份，未登录时跳到 `/login`；交互密集的部分由组件自己请求数据。PHP 处理事务、版本检查、权限与审计；agent 只通过内网工具访问业务数据。
 
 ## UI 规范
 
@@ -66,8 +66,7 @@ pnpm up
 
 - 应用地址：http://localhost:8080（端口由 `WEB_PORT` 决定），打开后注册账号。只有 nginx、Postgres 和 RustFS（默认图片存储，端口由 `S3_PORT` 决定）暴露在本机。
 - 健康检查：http://localhost:8080/api/health，由 AMPHP 并发检查数据库和 agent，任一不可用时返回 503。
-- legacy 以生产模式运行，Cookie 带 Secure。请用 `localhost` 访问（浏览器把它视为安全来源），不要用 `127.0.0.1`。
-- 每次 `pnpm up` 都会先由一次性的 `migrate` 服务在容器网络内执行 `migrations/`，legacy 和 api 等它成功后才启动；服务运行中新增迁移文件后，执行 `pnpm db:migrate` 补跑。迁移只作用于 compose 里的数据库，不受本机 5432 端口上其他 Postgres 的影响。
+- 每次 `pnpm up` 都会先由一次性的 `migrate` 服务在容器网络内执行 `migrations/`，api 等它成功后才启动；服务运行中新增迁移文件后，执行 `pnpm db:migrate` 补跑。迁移只作用于 compose 里的数据库，不受本机 5432 端口上其他 Postgres 的影响。
 
 停止并保留数据：
 
@@ -85,7 +84,7 @@ pnpm up
 pnpm --filter weave-web dev      # http://localhost:5173
 ```
 
-`pnpm --filter weave-legacy db:migrate` 仍可从本机迁移 `.env` 指向的数据库，例如 compose 之外的本机 Postgres。修改 `api/`、`agent/` 或 `legacy/` 后，用 `docker compose up -d --build <服务名>` 重新构建对应服务。也可以在本机直接运行：`pnpm --filter weave-agent dev`，或 `(set -a; . ./.env; php api/bin/server.php)`（需要 PHP 8.5 及 `pcntl`、`pgsql` 扩展，先执行 `composer install --working-dir=api`）。
+`pnpm --filter weave-legacy db:migrate` 仍可从本机迁移 `.env` 指向的数据库，例如 compose 之外的本机 Postgres。修改 `api/` 或 `agent/` 后，用 `docker compose up -d --build <服务名>` 重新构建对应服务。也可以在本机直接运行：`pnpm --filter weave-agent dev`，或 `(set -a; . ./.env; php api/bin/server.php)`（需要 PHP 8.5 及 `pcntl`、`pgsql` 扩展，先执行 `composer install --working-dir=api`）。
 
 ## 使用流程
 
@@ -107,7 +106,7 @@ pnpm --filter weave-web dev      # http://localhost:5173
 pnpm check
 ```
 
-根目录的 `check` 依次检查根目录文档格式、web 与 legacy（ESLint、类型检查、Vitest、Prettier 与构建）、agent（类型检查与 Prettier）和 api（PHPStan 最高级别与 PHPUnit）。api 的测试会启动真实的 `bin/server.php`，需要本机的 Postgres 和 RustFS，先执行 `pnpm db:up`。
+根目录的 `check` 依次检查根目录文档格式、web 与 legacy（ESLint、类型检查、Vitest、Prettier 与构建）、agent（类型检查、进程测试与 Prettier）和 api（PHPStan 最高级别与 PHPUnit）。api 的测试会启动真实的 `bin/server.php`，需要本机的 Postgres 和 RustFS，先执行 `pnpm db:up`。最后的 `pnpm test:cutover` 使用真实 PHP 与 agent、临时 schema 和 SQLite、受控模型，验证输入去重、断连后继续执行、提案回写和重复确认只创建一次任务。
 
 集成测试使用 `embedded-postgres` 创建临时的真实 PostgreSQL 17 实例，自动迁移并清理，不读取 `.env`、不访问开发数据库，也不依赖 Docker。测试覆盖权限隔离、权限撤销、并发冲突、历史恢复、无变化编辑、事务回滚、历史不可变、任务评论与回复、成员移除等。`legacy/scripts/e2e.mjs`（`pnpm --filter weave-legacy e2e`）是额外的 API 契约验证：启动生产构建并通过 HTTP 走完注册、项目、文档、任务、评论与编号定位，之后也用来验证迁到 AMPHP 的接口。
 
@@ -115,33 +114,20 @@ web 的构建产物位于 `web/dist`，legacy 的位于 `legacy/.next`。
 
 ## 部署
 
-应用可以直接部署到 Vercel：导入仓库即可，Next.js 会被自动识别，无需 `vercel.json`。需要的环境变量：
+通过 compose 或等价的长期运行容器部署 nginx、PHP API、单实例 agent、PostgreSQL 与 S3 存储；不再以 Next.js/Vercel 作为当前部署入口。
 
-| 变量                     | 说明                                                                                                                              |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`           | 托管 PostgreSQL 连接串，建议使用带 pooler 的地址（Neon、Supabase 等）                                                             |
-| `DATABASE_POOL_MAX`      | 每个实例的连接上限，Serverless 环境建议 2–3                                                                                       |
-| `APP_ORIGIN`             | 站点地址，例如 `https://weave.example.com`，必须与浏览器地址完全一致                                                              |
-| `CMD_API_KEY`            | Command Code 服务端密钥                                                                                                           |
-| `CMD_MODEL`              | 可选，默认 `deepseek/deepseek-v4.1-flash`                                                                                         |
-| `S3_ENDPOINT`            | 默认图片存储的 S3 兼容服务地址（ADR 0003）；compose 里默认是自带的 RustFS，其他部署未设置时，没有自定义 S3 的工作空间无法上传图片 |
-| `S3_ACCESS_KEY_ID`       | 默认图片存储的访问密钥 ID；compose 里同时用作 RustFS 的管理员账号                                                                 |
-| `S3_SECRET_ACCESS_KEY`   | 默认图片存储的访问密钥                                                                                                            |
-| `S3_BUCKET`              | 可选，默认 `weave-uploads`，api 启动时自动创建                                                                                    |
-| `S3_REGION`              | 可选，默认 `us-east-1`                                                                                                            |
-| `STORAGE_ENCRYPTION_KEY` | 32 字节 base64 密钥，加密工作空间的 S3 访问密钥：`openssl rand -base64 32`                                                        |
-| `TRUSTED_PROXY_HOPS`     | 可选，默认 1。应用前面会追加 `X-Forwarded-For` 的代理层数，用于识别登录限流的客户端地址；CDN 加 nginx 时设为 2                    |
+设置 `.env.example` 中的数据库、`AGENT_SERVICE_TOKEN`、模型和 S3 配置。生产入口使用 HTTPS，并设置与浏览器地址一致的 `APP_ORIGIN` 和正确的 `TRUSTED_PROXY_HOPS`。必须挂载 PostgreSQL、agent SQLite 与 RustFS 持久卷；agent 不能多实例共享同一个 SQLite 文件。
 
-数据库结构与数据不在构建流程里改动：部署后需要针对生产库执行一次 `DATABASE_URL=... pnpm db:migrate:remote`。首次部署前请确认数据库允许来自 Vercel 的连接，并按实例数收紧连接上限。
+发布时先备份两套数据库，再同步发布迁移 `014`、PHP、agent、SPA 和 nginx。没有旧对话需要复制，不执行导入。SQLite 应使用 backup API 或停机复制数据库与必要 WAL。新消息只存在 agent 存储，不应回退到 legacy 读取。详细步骤见[直接切换计划](docs/conversation-cutover.md)。
 
 ## 配置与边界
 
 - 密码使用随机盐和 scrypt 派生；会话通过 HttpOnly、SameSite Cookie 传递，数据库仅保存令牌摘要。
 - 登录和注册共用按来源 IP 计数的数据库限流，每 15 分钟最多 20 次。注册每次都计数；登录先占用一次额度，密码正确时退还，所以只有失败的登录会累计。来源 IP 取 `X-Forwarded-For` 中由可信代理追加的条目，客户端自己伪造的前缀不会生效。
 - 写请求需要 `X-Weave-Request: 1`，浏览器 Origin 必须匹配 `APP_ORIGIN`，未启用跨域访问。
-- `NODE_ENV=production` 时 Cookie 使用 Secure，需通过 HTTPS 访问。生产反向代理、限流和注册策略仍需部署前细化；当前不提供邮箱验证、密码找回或账号管理。
+- PHP 根据 `APP_ORIGIN` 的 HTTPS 配置设置 Secure Cookie。生产反向代理、限流和注册策略仍需部署前细化；当前不提供邮箱验证、密码找回或账号管理。
 - 不要把数据库密码或模型密钥写入任何 `NEXT_PUBLIC_` 变量，它们会被打进浏览器产物。
-- 任务对话通过 Vercel AI SDK（`ai` 与 `@ai-sdk/openai-compatible`）调用 Command Code 的 Chat Completions，使用服务端 `CMD_API_KEY`，可选 `CMD_MODEL`。回复以服务器发送事件流式返回。
+- 任务对话由 Pi Durable 调用 Command Code 的 Chat Completions，使用 agent 的 `CMD_API_KEY`，可选 `CMD_MODEL`。POST 持久接收输入后返回 202，回复通过独立 GET SSE 快照更新。浏览器关闭不会取消生成。
 - 图片上传经过应用服务端：校验成员身份、按文件内容识别类型（不接受 SVG），再写入存储。没有配置 S3 的工作空间使用部署的默认存储；配置后，之后的图片写入该 S3（按路径寻址，兼容 AWS S3、Cloudflare R2、RustFS 等）。默认存储同样按当前配置读取：换了默认存储的桶，已有图片无法显示。S3 访问密钥使用 AES-256-GCM 加密保存。图片按工作空间当前的 S3 读取：更换桶或改回默认存储后，已有 S3 图片无法显示。图片在编辑器里直接显示，正文中以 `![名称](/api/uploads/…)` 保存。
 - 迁移文件会记录 SHA-256 校验值；已应用的文件被修改时迁移会失败，应改为新增迁移。
 - `.env`、依赖、构建和覆盖率不会提交；开源许可证见 [LICENSE](LICENSE)。

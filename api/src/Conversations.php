@@ -23,7 +23,7 @@ final readonly class Conversations
     {
         return $db->execute(
             'SELECT c.id, c.workspace_id AS "workspaceId", c.project_id AS "projectId", c.created_by AS "ownerId",
-               c.agent_conversation_id AS "agentConversationId", c.import_status AS "importStatus"
+               c.agent_conversation_id AS "agentConversationId"
              FROM conversations c JOIN workspace_members m ON m.workspace_id = c.workspace_id AND m.user_id = $2
              WHERE c.id = $1 AND c.created_by = $2', [$id, $userId],
         )->fetchRow() ?? throw new ApiError(404, '对话不存在或无权访问。');
@@ -55,7 +55,7 @@ final readonly class Conversations
         )->fetchRow();
         $run = null;
         if ($latest !== null) {
-            $run = ['id' => $latest['id'], 'requestId' => $latest['requestId'], 'status' => $latest['status'], 'reply' => '', 'message' => $latest['error'], 'syncStatus' => $latest['synced_at'] === null ? 'pending' : 'complete'];
+            $run = ['inputStatus' => $latest['inputStatus'], 'id' => $latest['id'], 'requestId' => $latest['requestId'], 'status' => $latest['status'], 'reply' => '', 'message' => $latest['error'], 'syncStatus' => $latest['synced_at'] === null ? 'pending' : 'complete'];
             if ($latest['inputStatus'] === 'accepting' && $latest['status'] === 'running') {
                 $run['status'] = 'accepting';
             }
@@ -100,16 +100,9 @@ final readonly class Conversations
                 $workspace = Workspaces::project($db, $projectId, $user['id'], 'UPDATE');
                 $row = $db->execute('SELECT id FROM conversations WHERE project_id = $1 AND created_by = $2', [$projectId, $user['id']])->fetchRow();
                 if ($row === null) {
-                    // Stage 5 imports shared history before dropping legacy's project uniqueness.
-                    if ($db->execute("SELECT 1 FROM conversations WHERE project_id = $1 AND import_status <> 'complete'", [$projectId])->fetchRow() !== null) {
-                        throw new ApiError(503, '项目对话尚未完成私有迁移。');
-                    }
-                    $row = $db->execute("INSERT INTO conversations(id, workspace_id, project_id, created_by, import_status) VALUES(gen_random_uuid(), $1, $2, $3, 'complete') RETURNING id", [$workspace, $projectId, $user['id']])->fetchRow();
+                    $row = $db->execute("INSERT INTO conversations(id, workspace_id, project_id, created_by) VALUES(gen_random_uuid(), $1, $2, $3) RETURNING id", [$workspace, $projectId, $user['id']])->fetchRow();
                 }
                 $conversation = self::owned($db, Sql::string($row, 'id'), $user['id']);
-                if ($conversation['importStatus'] !== 'complete') {
-                    throw new ApiError(503, '历史对话尚未完成迁移。');
-                }
                 $id = Sql::string($conversation, 'id');
                 $existing = $db->execute('SELECT ' . self::INPUT_COLUMNS . ' FROM conversation_inputs i JOIN ai_runs r ON r.id = i.run_id WHERE i.conversation_id = $1 AND i.request_id = $2 FOR UPDATE OF i, r', [$id, $requestId])->fetchRow();
                 if ($existing !== null && $existing['bodyHash'] !== $hash) {
@@ -173,9 +166,6 @@ final readonly class Conversations
     /** @param array<string, mixed> $conversation */
     private function map(array $conversation): void
     {
-        if ($conversation['importStatus'] !== 'complete') {
-            throw new ApiError(503, '历史对话尚未完成迁移。');
-        }
         if ($conversation['agentConversationId'] !== null) return;
         $id = Sql::string($conversation, 'id');
         $mapped = $this->agent->json('PUT', "/conversations/{$id}", ['workspaceId' => $conversation['workspaceId'], 'projectId' => $conversation['projectId'], 'ownerId' => $conversation['ownerId']]);

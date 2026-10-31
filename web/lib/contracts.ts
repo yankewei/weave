@@ -254,7 +254,7 @@ export type WorkspaceMember = z.infer<typeof workspaceMemberSchema>;
 export type MembershipChange = z.infer<typeof membershipChangeSchema>;
 
 export const conversationMessageInputSchema = z
-  .object({ body: z.string().trim().min(1).max(8_000) })
+  .object({ requestId: z.uuid(), body: z.string().trim().min(1).max(8_000) })
   .strict();
 export const conversationMessageSchema = z.object({
   id: z.uuid(),
@@ -278,11 +278,40 @@ export const proposalSchema = z.object({
   summary: z.string(),
   items: z.array(proposalItemSchema),
 });
+export const conversationRunSchema = z.object({
+  id: z.uuid(),
+  requestId: z.uuid(),
+  status: z.enum(['accepting', 'running', 'succeeded', 'failed']),
+  reply: z.string(),
+  message: z.string().nullable(),
+});
+export const conversationPageSchema = z.object({
+  messages: z.array(conversationMessageSchema),
+  nextCursor: z.string().nullable(),
+});
+export const conversationSnapshotSchema = conversationPageSchema.extend({
+  conversationId: z.uuid(),
+  run: conversationRunSchema.nullable(),
+});
+export const conversationReceiptSchema = z.object({
+  conversationId: z.uuid(),
+  requestId: z.uuid(),
+  runId: z.uuid(),
+  status: z.literal('accepted'),
+});
+export const proposalStateSchema = z.object({ proposal: proposalSchema });
 export const conversationSchema = z.object({
   id: z.uuid(),
   workspaceId: z.uuid(),
   projectId: z.uuid(),
   messages: z.array(conversationMessageSchema),
+  nextCursor: z.string().nullable(),
+  run: conversationRunSchema
+    .extend({
+      inputStatus: z.enum(['accepting', 'accepted', 'closed']),
+      syncStatus: z.enum(['pending', 'complete']),
+    })
+    .nullable(),
   proposal: proposalSchema.nullable(),
 });
 export const conversationStateSchema = z.object({

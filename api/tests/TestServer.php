@@ -36,7 +36,7 @@ final class TestServer
     private function __construct(
         public readonly PostgresConnectionPool $database,
         private readonly HttpClient $http,
-        private readonly string $url,
+        public readonly string $url,
         private readonly string $log,
     ) {
     }
@@ -70,7 +70,7 @@ final class TestServer
         return $this->http->request($request);
     }
 
-    public static function start(string $agentUrl = 'http://127.0.0.1:9'): self
+    public static function start(string $agentUrl = 'http://127.0.0.1:9', string $serviceToken = 'test', string $origin = self::ORIGIN): self
     {
         $schema = 'weave_test_' . bin2hex(random_bytes(4));
         $options = "-c search_path={$schema}";
@@ -107,8 +107,8 @@ final class TestServer
                 'API_PORT' => (string) $port,
                 'PGOPTIONS' => $options,
                 'AGENT_URL' => $agentUrl,
-                'AGENT_SERVICE_TOKEN' => 'test',
-                'APP_ORIGIN' => self::ORIGIN,
+                'AGENT_SERVICE_TOKEN' => $serviceToken,
+                'APP_ORIGIN' => $origin,
                 'TRUSTED_PROXY_HOPS' => '1',
                 'STORAGE_ENCRYPTION_KEY' => self::STORAGE_KEY,
                 'S3_ENDPOINT' => self::s3()['endpoint'],

@@ -11,12 +11,8 @@ const serviceToken = process.env.AGENT_SERVICE_TOKEN;
 if (!serviceToken?.trim()) throw new Error('Set AGENT_SERVICE_TOKEN in .env');
 
 await mkdir(dirname(storagePath), { recursive: true });
-const mode = process.env.AGENT_MODE ?? 'serve';
-if (mode !== 'serve' && mode !== 'import')
-  throw new Error('AGENT_MODE must be serve or import');
 const runtime = await Conversations.open(storagePath, {
   secret: serviceToken,
-  mode,
 });
 const server = agentServer(runtime, serviceToken);
 
@@ -31,7 +27,7 @@ void runtime.harness.closed.then((result) => {
 server.listen(port, host, () => {
   const address = server.address();
   console.log(
-    `weave-agent listening on ${address && typeof address === 'object' ? address.port : port} in ${mode} mode`,
+    `weave-agent listening on ${address && typeof address === 'object' ? address.port : port}`,
   );
 });
 

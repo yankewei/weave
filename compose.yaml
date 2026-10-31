@@ -4,7 +4,7 @@ name: weave
 # Only nginx (and postgres and rustfs, for local tools and tests) is published on the host.
 
 services:
-  # Serves the web SPA and routes /api to legacy or api.
+  # Serves the web SPA and routes every /api request to PHP.
   nginx:
     build:
       context: .
@@ -13,28 +13,6 @@ services:
       - '127.0.0.1:${WEB_PORT:-8080}:80'
     depends_on:
       - api
-      - legacy
-
-  # Next Route Handlers that still serve /api until the AMPHP API replaces them.
-  legacy:
-    build:
-      context: .
-      dockerfile: legacy/Dockerfile
-    environment:
-      DATABASE_URL: ${DATABASE_URL:-}
-      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-      APP_ORIGIN: http://localhost:${WEB_PORT:-8080}
-      TRUSTED_PROXY_HOPS: 1
-      CMD_API_KEY: ${CMD_API_KEY:-}
-      CMD_MODEL: ${CMD_MODEL:-}
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
 
   api:
     build: api

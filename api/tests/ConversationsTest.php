@@ -56,6 +56,12 @@ final class ConversationsTest extends TestCase
         self::assertSame(404, $this->request('GET', "/api/conversations/{$id}/events", $member)->status);
         self::assertSame(400, $this->request('GET', "/api/conversations/{$id}/messages?limit=0", $token)->status);
         self::assertSame(200, $this->request('GET', "/api/conversations/{$id}/messages", $token)->status);
+        $private = $this->request('POST', $path . '/messages', $member, ['requestId' => self::uuid(), 'body' => '另一个成员自己的消息']);
+        self::assertSame(202, $private->status, $private->body);
+        $privateId = self::text(self::json($private), 'conversationId');
+        self::assertNotSame($id, $privateId);
+        self::assertSame(404, $this->request('GET', "/api/conversations/{$privateId}/messages", $token)->status);
+        self::assertSame('另一个成员自己的消息', self::at(self::json($this->request('GET', $path, $member)), 'conversation', 'messages', 0, 'body'));
     }
 
     public function testLostReceiptCanBeRepairedEvenWhenAProposalIsAlreadyPending(): void

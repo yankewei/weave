@@ -9,7 +9,7 @@ export default defineConfig({
     alias: { '@': fileURLToPath(new URL('./', import.meta.url)) },
   },
   server: {
-    // nginx from `docker compose up` routes each /api path to legacy or api,
+    // nginx from `docker compose up` routes every /api path to PHP,
     // so the dev server keeps no routing table of its own.
     proxy: { '/api': process.env.API_PROXY_TARGET ?? 'http://localhost:8080' },
   },

@@ -5,15 +5,14 @@ import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import { type ConversationId } from '@earendil-works/pi-durable';
 import { Conversations } from '../src/conversations.ts';
 import { Admissions, Index, Inputs, State } from '../src/state.ts';
-import { digest, type Message } from '../src/protocol.ts';
+import { type Message } from '../src/protocol.ts';
 import { eventually, fixture } from './fixture.ts';
 
-function binding(importing = false) {
+function binding() {
   return {
     workspaceId: randomUUID(),
     projectId: randomUUID(),
     ownerId: randomUUID(),
-    importing,
   };
 }
 
@@ -34,7 +33,6 @@ test(
     const app = await fixture(t);
     const runtime = await Conversations.open(app.storagePath, {
       secret: 'fixture',
-      mode: 'serve',
     });
     const prepared: { id: string; message: ReturnType<typeof input> }[] = [];
     try {
@@ -377,161 +375,48 @@ test(
 );
 
 test(
-  'ordered history imports are atomic, idempotent, sealed and paginated across restarts',
-  { timeout: 30000 },
+  'live message pagination is stable while later turns arrive; import routes are absent',
+  { timeout: 20000 },
   async (t) => {
     const app = await fixture(t);
-    await app.start({ mode: 'import' });
+    await app.start();
     const id = randomUUID();
     const path = `/conversations/${id}`;
-    const owner = binding(true);
-    await app.request(path, 'PUT', owner);
-    const messages: Message[] = Array.from({ length: 9 }, (_, index) => ({
-      id: randomUUID(),
-      authorType: index % 2 ? 'assistant' : 'user',
-      authorName: index % 2 ? null : '历史成员',
-      body: `历史内容 ${index}`,
-      createdAt: new Date(Date.UTC(2026, 1, 1, 0, 0, index)).toISOString(),
-    }));
-    const batch = {
-      batchId: randomUUID(),
-      offset: 0,
-      messages: messages.slice(0, 5),
-    };
-    const first = await app.request(`${path}/import`, 'PUT', batch);
-    assert.equal(
-      (
-        await app.request(`${path}/import`, 'PUT', {
-          batchId: randomUUID(),
-          offset: 0,
-          messages: [{ ...messages[0], authorType: ['user'] }],
-        })
-      ).status,
-      400,
-    );
-    assert.equal(first.status, 200, JSON.stringify(first));
-    assert.equal(first.body.count, 5);
-    assert.deepEqual(
-      (await app.request(`${path}/import`, 'PUT', batch)).body,
-      first.body,
-    );
-    assert.equal(
-      (
-        await app.request(`${path}/import`, 'PUT', {
-          ...batch,
-          messages: messages.slice(0, 4),
-        })
-      ).status,
-      409,
-    );
-    const invalid = {
-      batchId: randomUUID(),
-      offset: 5,
-      messages: [messages[5], messages[0]],
-    };
-    assert.equal(
-      (await app.request(`${path}/import`, 'PUT', invalid)).status,
-      409,
-    );
-    assert.equal((await app.request(path)).body.messages.length, 5);
-    assert.equal(
-      (await app.request(`${path}/inputs`, 'POST', input())).status,
-      409,
-    );
-    await app.stop('SIGKILL');
-    await app.start();
-    assert.equal(
-      (await app.request(`${path}/inputs`, 'POST', input())).status,
-      409,
-    );
-    await app.stop();
-    await app.start({ mode: 'import' });
-    assert.deepEqual(
-      (await app.request(`${path}/import`, 'PUT', batch)).body,
-      first.body,
-    );
-    assert.equal(
-      (
-        await app.request(`${path}/import/complete`, 'PUT', {
-          count: 9,
-          digest: '0'.repeat(64),
-        })
-      ).status,
-      409,
-    );
-    const second = await app.request(`${path}/import`, 'PUT', {
-      batchId: randomUUID(),
-      offset: 5,
-      messages: messages.slice(5),
-    });
-    assert.equal(second.status, 200, JSON.stringify(second));
-    let hash = '0'.repeat(64);
-    for (const message of messages)
-      hash = digest(`${hash}\n${JSON.stringify(message)}`);
-    assert.equal(second.body.digest, hash);
-    const completion = { count: 9, digest: hash };
-    assert.equal(
-      (await app.request(`${path}/import/complete`, 'PUT', completion)).status,
-      200,
-    );
-    assert.equal(
-      (await app.request(`${path}/import/complete`, 'PUT', completion)).status,
-      200,
-    );
-    assert.equal(
-      (
-        await app.request(`${path}/import`, 'PUT', {
-          batchId: randomUUID(),
-          offset: 9,
-          messages: [messages[8]],
-        })
-      ).status,
-      409,
-    );
-    assert.equal(app.model.calls, 0);
-    await app.stop();
-    await app.start();
-    assert.equal(
-      (await app.request(path, 'PUT', { ...owner, importing: false })).status,
-      200,
-    );
-    const latest = await app.request(`${path}/messages?limit=3`);
-    assert.deepEqual(latest.body.messages, messages.slice(6));
-    const cursor = latest.body.nextCursor;
-    assert.equal(typeof cursor, 'string');
-    assert.equal(
-      (await app.request(`${path}/messages?cursor=${cursor}x`)).status,
-      400,
-    );
-    const other = randomUUID();
-    await app.request(`/conversations/${other}`, 'PUT', binding());
-    assert.equal(
-      (await app.request(`/conversations/${other}/messages?cursor=${cursor}`))
-        .status,
-      400,
-    );
-    const message = input('新问题');
-    assert.equal(
-      (await app.request(`${path}/inputs`, 'POST', message)).status,
-      202,
-    );
+    await app.request(path, 'PUT', binding());
+    for (let turn = 0; turn < 3; turn++) {
+      await app.request(`${path}/inputs`, 'POST', input(`问题 ${turn}`));
+      await eventually(
+        () => app.request(path),
+        (state) => state.body.run?.status === 'succeeded',
+      );
+    }
+    let page = (await app.request(`${path}/messages?limit=2`)).body;
+    const messages: Message[] = [...page.messages];
+    await app.request(`${path}/inputs`, 'POST', input('分页之后的新问题'));
     await eventually(
       () => app.request(path),
       (state) => state.body.run?.status === 'succeeded',
     );
-    const older = await app.request(
-      `${path}/messages?limit=3&cursor=${cursor}`,
+    while (page.nextCursor) {
+      page = (
+        await app.request(
+          `${path}/messages?limit=2&cursor=${encodeURIComponent(page.nextCursor)}`,
+        )
+      ).body;
+      messages.unshift(...page.messages);
+    }
+    assert.equal(messages.length, 6);
+    assert.equal(new Set(messages.map((message) => message.id)).size, 6);
+    assert.deepEqual(
+      messages
+        .filter((message) => message.authorType === 'user')
+        .map((message) => message.body),
+      ['问题 0', '问题 1', '问题 2'],
     );
-    assert.deepEqual(older.body.messages, messages.slice(3, 6));
-    const oldest = await app.request(
-      `${path}/messages?limit=3&cursor=${older.body.nextCursor}`,
-    );
-    assert.deepEqual(oldest.body.messages, messages.slice(0, 3));
-    assert.equal(oldest.body.nextCursor, null);
+    assert.equal((await app.request(`${path}/import`, 'POST', {})).status, 404);
     assert.equal(
-      (await app.request(`${path}/import`, 'PUT', batch)).status,
-      409,
+      (await app.request(`${path}/import/complete`, 'POST', {})).status,
+      404,
     );
-    assert.match(JSON.stringify(app.model.prompts), /历史内容 0/);
   },
 );

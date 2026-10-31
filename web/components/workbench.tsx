@@ -128,6 +128,7 @@ export function Workbench({
       <div className="flex flex-col gap-4 lg:h-[min(44rem,calc(100svh-12rem))] lg:flex-row">
         <Card className="h-[36rem] min-w-0 gap-0 py-0 lg:h-auto lg:flex-1">
           <TaskConversation
+            key={`${user.id}/${projectId}`}
             ref={conversationRef}
             placement="page"
             projectId={projectId}

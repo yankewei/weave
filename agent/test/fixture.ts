@@ -97,9 +97,7 @@ export async function fixture(t: TestContext) {
     process.kill(signal);
     await exited;
   };
-  const start = async (
-    options: { mode?: string; key?: string; apiUrl?: string } = {},
-  ) => {
+  const start = async (options: { key?: string; apiUrl?: string } = {}) => {
     await stop();
     log = '';
     process = spawn(globalThis.process.execPath, ['src/server.ts'], {
@@ -107,10 +105,9 @@ export async function fixture(t: TestContext) {
       env: {
         ...globalThis.process.env,
         AGENT_HOST: '127.0.0.1',
-        AGENT_PORT: '0',
+        AGENT_PORT: url ? new URL(url).port : '0',
         AGENT_STORAGE_PATH: join(directory, 'agent.sqlite'),
         AGENT_SERVICE_TOKEN: token,
-        AGENT_MODE: options.mode ?? 'serve',
         AGENT_API_URL: options.apiUrl ?? '',
         CMD_API_KEY: options.key ?? 'fake-local-key',
         CMD_MODEL: 'test-model',
@@ -139,6 +136,9 @@ export async function fixture(t: TestContext) {
     await rm(directory, { recursive: true, force: true });
   });
   return {
+    get url() {
+      return url;
+    },
     storagePath: join(directory, 'agent.sqlite'),
     start,
     stop,

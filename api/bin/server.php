@@ -66,6 +66,7 @@ $errorHandler = new JsonErrorHandler();
 $router = new Router($server, $logger, $errorHandler);
 $router->addMiddleware(new ApiMiddleware($config, $errorHandler, $logger));
 $router->addRoute('GET', '/api/health', new HealthHandler($database, $http, $config, $logger));
+$router->addRoute('GET', '/api/health/ready', new HealthHandler($database, $http, $config, $logger));
 
 // Node's libuv pool ran scrypt on 4 threads; match it.
 $auth = new Auth($database, $config, new ContextWorkerPool(4));
