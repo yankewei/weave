@@ -1,46 +1,47 @@
-import { createServer } from 'node:http';
+import { mkdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels } from '@earendil-works/pi-ai/models';
-import { createRegistry, Harness } from '@earendil-works/pi-durable';
-import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
+import { Conversations } from './conversations.ts';
+import { agentServer } from './http.ts';
 
-const context = BACKGROUND_CONTEXT;
 const port = Number(process.env.AGENT_PORT ?? 8090);
 const host = process.env.AGENT_HOST ?? '127.0.0.1';
 const storagePath = process.env.AGENT_STORAGE_PATH ?? './data/agent.sqlite';
 const serviceToken = process.env.AGENT_SERVICE_TOKEN;
-if (!serviceToken) throw new Error('Set AGENT_SERVICE_TOKEN in .env');
+if (!serviceToken?.trim()) throw new Error('Set AGENT_SERVICE_TOKEN in .env');
 
-// One process owns the storage; conversations left mid-run continue here.
-const harness = await Harness.open(
-  await openNodeSqliteStorage(storagePath),
-  { models: createModels(), registry: createRegistry() },
-  context,
-);
-harness.resume();
+await mkdir(dirname(storagePath), { recursive: true });
+const mode = process.env.AGENT_MODE ?? 'serve';
+if (mode !== 'serve' && mode !== 'import')
+  throw new Error('AGENT_MODE must be serve or import');
+const runtime = await Conversations.open(storagePath, {
+  secret: serviceToken,
+  mode,
+});
+const server = agentServer(runtime, serviceToken);
 
-const server = createServer((request, response) => {
-  // Only the PHP API calls the agent, always with the shared service token.
-  if (request.headers.authorization !== `Bearer ${serviceToken}`) {
-    response.writeHead(401).end();
-    return;
-  }
-  if (request.method === 'GET' && request.url === '/health') {
-    response
-      .writeHead(200, { 'content-type': 'application/json' })
-      .end(JSON.stringify({ status: 'ok', service: 'weave-agent' }));
-    return;
-  }
-  response.writeHead(404).end();
+void runtime.harness.closed.then((result) => {
+  if (result.reason !== 'failed') return;
+  console.error('Agent storage failed; restart is required');
+  server.close();
+  server.closeAllConnections();
+  process.exit(1);
 });
 
 server.listen(port, host, () => {
-  console.log(`weave-agent listening on ${host}:${port}`);
+  const address = server.address();
+  console.log(
+    `weave-agent listening on ${address && typeof address === 'object' ? address.port : port} in ${mode} mode`,
+  );
 });
 
+let stopping = false;
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
+    if (stopping) return;
+    stopping = true;
     server.close();
-    void harness.close(context).then(() => process.exit(0));
+    server.closeAllConnections();
+    void runtime.harness.close(BACKGROUND_CONTEXT).then(() => process.exit(0));
   });
 }

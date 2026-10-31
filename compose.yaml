@@ -70,6 +70,9 @@ services:
       dockerfile: agent/Dockerfile
     environment:
       AGENT_SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:?Set AGENT_SERVICE_TOKEN in .env}
+      AGENT_API_URL: http://api:8080
+      CMD_API_KEY: ${CMD_API_KEY:-}
+      CMD_MODEL: ${CMD_MODEL:-}
     volumes:
       - agent_data:/data
 

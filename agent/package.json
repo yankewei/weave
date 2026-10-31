@@ -10,9 +10,10 @@
     "dev": "node --env-file-if-exists=../.env --watch src/server.ts",
     "start": "node src/server.ts",
     "typecheck": "tsc --noEmit",
+    "test": "node --test --test-concurrency=1 test/*.test.ts",
     "format": "prettier . --write",
     "format:check": "prettier . --check",
-    "check": "pnpm typecheck && pnpm format:check"
+    "check": "pnpm typecheck && pnpm test && pnpm format:check"
   },
   "dependencies": {
     "@earendil-works/chord": "1.4.0",

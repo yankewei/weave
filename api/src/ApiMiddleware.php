@@ -60,7 +60,15 @@ final readonly class ApiMiddleware implements Middleware
     private function respond(Request $request, RequestHandler $requestHandler): Response
     {
         try {
-            $this->assertSameOrigin($request);
+            // Match the router's one rawurldecode pass; encoded separators/prefixes
+            // must not dispatch an internal handler under browser authentication.
+            if (str_starts_with(rawurldecode($request->getUri()->getPath()), '/internal/')) {
+                if ($this->config->agentServiceToken === '' || !hash_equals('Bearer ' . $this->config->agentServiceToken, $request->getHeader('authorization') ?? '')) {
+                    return Json::error(401, '服务身份无效。');
+                }
+            } else {
+                $this->assertSameOrigin($request);
+            }
 
             return $requestHandler->handleRequest($request);
         } catch (ClientException $error) {

@@ -86,26 +86,38 @@ final readonly class Tasks
         return Json::response(Sql::transaction($this->database, function (PostgresExecutor $db) use ($projectId, $user, $input): array {
             $workspaceId = Workspaces::project($db, $projectId, $user['id'], 'UPDATE');
             self::checkAssignee($db, $workspaceId, $input['assigneeId']);
-            $task = $db->execute(
-                'WITH counter AS (
-                   UPDATE workspaces SET task_counter = task_counter + 1 WHERE id = $1 RETURNING task_counter
-                 ), t AS (
-                   INSERT INTO tasks(id, workspace_id, project_id, number, title, description, acceptance_criteria,
-                     status, priority, assignee_id, position, version, updated_by)
-                   SELECT gen_random_uuid(), $1, $2, task_counter, $3, $4, $5, $6, $7, $8, $9, 1, $10 FROM counter
-                   RETURNING *
-                 )
-                 SELECT ' . self::columns() . ' FROM t LEFT JOIN users u ON u.id = t.assignee_id',
-                [
-                    $workspaceId, $projectId, $input['title'], $input['description'], $input['acceptanceCriteria'],
-                    $input['status'], $input['priority'], $input['assigneeId'],
-                    self::positionBefore($db, $projectId, $input['status'], null, null), $user['id'],
-                ],
-            )->fetchRow() ?? throw new \UnexpectedValueException("Workspace {$workspaceId} has no task counter");
-            self::record($db, $user['id'], null, $task, 'create');
 
-            return $task;
+            return self::insert($db, $user['id'], $projectId, $workspaceId, $input);
         }), 201);
+    }
+
+    /**
+     * Shared by hand creation and confirmed proposals; the caller locks the project.
+     * @param array{title: string, description: string, acceptanceCriteria: string, status: string, priority: string, assigneeId: ?string} $input
+     * @param array{proposalId: string, proposalItemId: string}|null $source
+     * @return array<string, mixed>
+     */
+    public static function insert(PostgresExecutor $db, string $userId, string $projectId, string $workspaceId, array $input, ?array $source = null): array
+    {
+        $task = $db->execute(
+            'WITH counter AS (
+               UPDATE workspaces SET task_counter = task_counter + 1 WHERE id = $1 RETURNING task_counter
+             ), t AS (
+               INSERT INTO tasks(id, workspace_id, project_id, number, title, description, acceptance_criteria,
+                 status, priority, assignee_id, position, version, updated_by)
+               SELECT gen_random_uuid(), $1, $2, task_counter, $3, $4, $5, $6, $7, $8, $9, 1, $10 FROM counter
+               RETURNING *
+             )
+             SELECT ' . self::columns() . ' FROM t LEFT JOIN users u ON u.id = t.assignee_id',
+            [
+                $workspaceId, $projectId, $input['title'], $input['description'], $input['acceptanceCriteria'],
+                $input['status'], $input['priority'], $input['assigneeId'],
+                self::positionBefore($db, $projectId, $input['status'], null, null), $userId,
+            ],
+        )->fetchRow() ?? throw new \UnexpectedValueException("Workspace {$workspaceId} has no task counter");
+        self::record($db, $userId, null, $task, 'create', $source);
+
+        return $task;
     }
 
     public function update(Request $request): Response
@@ -335,17 +347,19 @@ final readonly class Tasks
     /**
      * @param array<string, mixed>|null $before
      * @param array<string, mixed> $after
+     * @param array{proposalId: string, proposalItemId: string}|null $source
      */
-    private static function record(PostgresExecutor $db, string $userId, ?array $before, array $after, string $kind): void
+    private static function record(PostgresExecutor $db, string $userId, ?array $before, array $after, string $kind, ?array $source = null): void
     {
         $db->execute(
             'INSERT INTO task_events(operation_id, workspace_id, project_id, task_id, version, kind,
-               initiator_id, confirmer_id, before_state, after_state)
-             VALUES(gen_random_uuid(), $1, $2, $3, $4, $5, $6, $6, $7::jsonb, $8::jsonb)',
+               initiator_id, confirmer_id, before_state, after_state, proposal_id, proposal_item_id)
+             VALUES(gen_random_uuid(), $1, $2, $3, $4, $5, $6, $6, $7::jsonb, $8::jsonb, $9, $10)',
             [
                 $after['workspaceId'], $after['projectId'], $after['id'], $after['version'], $kind, $userId,
                 $before === null ? null : Json::encode($before),
                 Json::encode($after),
+                $source['proposalId'] ?? null, $source['proposalItemId'] ?? null,
             ],
         );
     }

@@ -23,7 +23,9 @@
 
 ## 工程结构
 
-项目正在从 Next.js 全栈迁移到 nginx + AMPHP + Pi Durable 架构，决策见 [ADR 0002](docs/adr/0002-nginx-amphp-pi-durable.md)。前端已经拆成纯静态 SPA；后端按接口逐个从 `legacy` 迁到 `api`，nginx 决定每个 `/api` 路径由谁处理。目前已迁移的只有 `/api/health`。
+项目正在从 Next.js 全栈迁移到 nginx + AMPHP + Pi Durable 架构，决策见 [ADR 0002](docs/adr/0002-nginx-amphp-pi-durable.md)。前端已经拆成纯静态 SPA；健康检查、认证、工作空间与成员、项目、任务与评论、文档、图片上传和存储设置已迁到 `api`。nginx 默认将 `/api` 转给 PHP，对话、提案确认与拒绝、`/api/health/ready` 仍交给 `legacy`。下一阶段的接口与数据切换方案见[对话与提案迁移契约](docs/conversation-migration.md)。
+
+agent 已提供内网持久对话、输入去重、SSE 快照与历史导入接口，使用 SQLite 保存状态；浏览器尚未切换。模型配置由 agent 读取 `CMD_API_KEY` / `CMD_MODEL`。项目资料、编号引用和提案工具，以及 PHP 的提案处理、私有对话入口、接收协调与 SSE 转发已实现；执行终态由 agent 的持久任务重试回写 PHP。下一阶段实施历史导入、前端适配与路由切换。断线重连恢复最新快照，不逐条重放流事件，见 [ADR 0004](docs/adr/0004-conversation-reconnect-uses-snapshots.md)。
 
 ```text
 web/                      React SPA（Vite + React Router），nginx 托管构建产物
@@ -149,6 +151,7 @@ web 的构建产物位于 `web/dist`，legacy 的位于 `legacy/.next`。
 - [决策汇总](docs/decisions.md)
 - [产品与数据设计](docs/product-and-data-design.md)
 - [文档闭环实现](docs/document-lifecycle.md)
+- [对话与提案迁移契约](docs/conversation-migration.md)
 
 ## 许可证
 

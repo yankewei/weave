@@ -59,7 +59,18 @@ final class TestServer
         return new TestResponse($response->getStatus(), $response->getHeaders(), $response->getBody()->buffer());
     }
 
-    private static function start(): self
+    public function subscribe(string $path, string $token): \Amp\Http\Client\Response
+    {
+        $request = new Request($this->url . $path);
+        $request->setHeader('cookie', "weave_session={$token}");
+        $request->setHeader('accept', 'text/event-stream');
+        $request->setTransferTimeout(0);
+        $request->setInactivityTimeout(25);
+
+        return $this->http->request($request);
+    }
+
+    public static function start(string $agentUrl = 'http://127.0.0.1:9'): self
     {
         $schema = 'weave_test_' . bin2hex(random_bytes(4));
         $options = "-c search_path={$schema}";
@@ -95,7 +106,7 @@ final class TestServer
                 'API_HOST' => '127.0.0.1',
                 'API_PORT' => (string) $port,
                 'PGOPTIONS' => $options,
-                'AGENT_URL' => 'http://127.0.0.1:9',
+                'AGENT_URL' => $agentUrl,
                 'AGENT_SERVICE_TOKEN' => 'test',
                 'APP_ORIGIN' => self::ORIGIN,
                 'TRUSTED_PROXY_HOPS' => '1',

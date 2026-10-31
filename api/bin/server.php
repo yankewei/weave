@@ -18,6 +18,9 @@ use Amp\Postgres\PostgresConnectionPool;
 use Monolog\Logger;
 use Monolog\Processor\PsrLogMessageProcessor;
 use Weave\Api\ApiMiddleware;
+use Weave\Api\AgentTools;
+use Weave\Api\AgentClient;
+use Weave\Api\Conversations;
 use Weave\Api\Auth;
 use Weave\Api\Comments;
 use Weave\Api\Config;
@@ -26,6 +29,7 @@ use Weave\Api\HealthHandler;
 use Weave\Api\JsonErrorHandler;
 use Weave\Api\Members;
 use Weave\Api\ObjectStore;
+use Weave\Api\Proposals;
 use Weave\Api\Storage;
 use Weave\Api\Tasks;
 use Weave\Api\Uploads;
@@ -97,6 +101,20 @@ $router->addRoute('GET', '/api/projects/{projectId}/members', new ClosureRequest
 $router->addRoute('PUT', '/api/tasks/{taskId}', new ClosureRequestHandler($tasks->update(...)));
 $router->addRoute('POST', '/api/tasks/{taskId}/move', new ClosureRequestHandler($tasks->move(...)));
 $router->addRoute('GET', '/api/tasks/{taskId}/history', new ClosureRequestHandler($tasks->history(...)));
+
+$proposals = new Proposals($database, $auth);
+$router->addRoute('GET', '/api/proposals/{proposalId}', new ClosureRequestHandler($proposals->read(...)));
+$router->addRoute('POST', '/api/proposals/{proposalId}/{decision}', new ClosureRequestHandler($proposals->resolve(...)));
+$router->addRoute('POST', '/internal/agent/runs/{runId}/proposal', new ClosureRequestHandler($proposals->submit(...)));
+$agentTools = new AgentTools($database);
+$router->addRoute('GET', '/internal/agent/runs/{runId}/context', new ClosureRequestHandler($agentTools->context(...)));
+$router->addRoute('POST', '/internal/agent/runs/{runId}/references', new ClosureRequestHandler($agentTools->references(...)));
+$router->addRoute('PUT', '/internal/agent/runs/{runId}/outcome', new ClosureRequestHandler($agentTools->outcome(...)));
+$conversations = new Conversations($database, $auth, new AgentClient((new HttpClientBuilder())->followRedirects(0)->retry(0)->build(), $config));
+$router->addRoute('GET', '/api/projects/{projectId}/conversation', new ClosureRequestHandler($conversations->open(...)));
+$router->addRoute('POST', '/api/projects/{projectId}/conversation/messages', new ClosureRequestHandler($conversations->send(...)));
+$router->addRoute('GET', '/api/conversations/{conversationId}/messages', new ClosureRequestHandler($conversations->messages(...)));
+$router->addRoute('GET', '/api/conversations/{conversationId}/events', new ClosureRequestHandler($conversations->events(...)));
 
 $comments = new Comments($database, $auth);
 $router->addRoute('GET', '/api/tasks/{taskId}/comments', new ClosureRequestHandler($comments->list(...)));

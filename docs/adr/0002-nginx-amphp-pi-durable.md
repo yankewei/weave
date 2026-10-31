@@ -6,7 +6,7 @@ Weave 由 Next.js 全栈改为四个服务，用一个 docker compose 启动：n
 
 - 身份：登录会话由 PHP 管理（HttpOnly cookie）。PHP 校验身份和对话归属（见 ADR 0001）后才调用 agent。agent 只认 PHP 的服务 token。
 - 生成与连接无关：发消息时，PHP 把输入转给 agent，agent 用 `submit()` 持久化接收后立即返回，生成作为 harness 里的持久任务运行。`requestId` 由前端生成，重试不会重复提交。
-- 流式：浏览器向 PHP 订阅 SSE，PHP 向 agent 订阅 SSE（底层是 `watch()`），然后逐块透传。浏览器断开时，PHP 取消上游请求，只停止订阅，生成继续。重新打开对话时，浏览器带上 `Last-Event-ID`，PHP 转成 `from` 参数，agent 从 SQLite 补发错过的内容和进行中的回复。更早的历史通过分页接口读取。PHP 不缓冲、不保存流的任何状态。
+- 流式：浏览器向 PHP 订阅 SSE，PHP 向 agent 订阅 SSE（底层是 `watch()`），然后逐块透传。浏览器断开时，PHP 取消上游请求，只停止订阅，生成继续。重连恢复最新已提交快照，更早的历史通过分页接口读取。原先设想的 `Last-Event-ID` / `from` 补发不受当前 Pi Durable 支持，已由 [ADR 0004](0004-conversation-reconnect-uses-snapshots.md) 修正。PHP 不缓冲、不保存流的任何状态。
 - 业务数据：agent 的工具只通过 PHP 内部接口读取文档和任务、提交提案，不直接连 Postgres。提案由 PHP 保存为待确认，用户确认后由 PHP 写入正式内容。
 
 ## Considered Options
@@ -23,5 +23,5 @@ Weave 由 Next.js 全栈改为四个服务，用一个 docker compose 启动：n
 - 后端有 PHP 和 Node 两种语言，`pnpm check` 要拆成 web、api、agent 各自的检查。
 - 前后端不再共享 zod 契约，需要另找方式同步类型（OpenAPI 生成或手写）。
 - PHP 的流式转发必须写对：背压、超时、浏览器断开时取消上游，任何阻塞调用都会卡住所有连接。
-- Pi Durable 还是 experimental，API 可能变动，存储只有 memory、SQLite、JSONL。对话数据存 SQLite 卷，和 Postgres 分开备份；一份存储只能由一个进程驱动，agent 只能单实例运行。
+- Pi Durable 还是 experimental，API 可能变动。服务端采用官方内置的 SQLite 后端，对话数据存 SQLite 卷，和 Postgres 分开备份；一份存储只能由一个进程驱动，agent 只能单实例运行。当前锁定 1.4.0，官方还提供 memory、JSONL、浏览器 IndexedDB 和 Cloudflare Durable Object 存储。
 - 迁移顺序是先拆前端，再换后端。第一步把页面改成 Vite + React Router 的 SPA，交给 nginx 托管，原来服务端页面里的会话检查、重定向和成员校验改到路由 loader 里，通过 HTTP 调用。原 Next 应用移到 `legacy/`，只保留 `/api` Route Handlers。之后前后端之间只剩 `/api/*` 这一层契约，nginx 每改一条路由，接口就从 `legacy` 切到 PHP，前端不用动。全部迁完后删除 `legacy/`。过渡期多一个容器。

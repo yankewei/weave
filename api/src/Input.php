@@ -19,7 +19,7 @@ final class Input
     private array $issues = [];
 
     /** @param array<mixed> $payload */
-    private function __construct(private readonly array $payload, string ...$fields)
+    public function __construct(private readonly array $payload, string ...$fields)
     {
         foreach (array_diff(array_map(strval(...), array_keys($payload)), $fields) as $unknown) {
             $this->issues[] = "{$unknown}: 不支持的字段";
