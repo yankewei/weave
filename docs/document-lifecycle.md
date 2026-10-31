@@ -4,16 +4,16 @@
 
 此阶段完成账号、工作空间、项目和文档的手工变更闭环。采用邮箱密码与数据库会话；注册时创建工作空间并授予管理员身份。项目继承工作空间权限。管理员可以按邮箱邀请已注册用户、查看成员并移除成员；成员可以退出。邀请后的角色是成员，空间至少保留一名管理员。
 
-数据库使用 node-postgres 和参数化 SQL。数据库迁移为显式执行的 SQL 文件；尚未采用 ORM。页面、Route Handlers 与服务层在同一个 Next.js 应用内，保持模块化单体结构。任务对话和创建任务提案已接入；文档提案仍属于后续阶段，尚未接入持久化队列。
+前端是 Vite + React Router 的纯客户端 SPA，业务请求全部走同源 `/api`。业务 API 使用 PHP 8.5 + AMPHP 与参数化 SQL，是唯一连接 PostgreSQL 的服务；AI 对话由 Node 24 的 Pi Durable agent 在内网执行，用 SQLite 保存私有消息与检查点。数据库迁移为显式执行的 SQL 文件，尚未采用 ORM。任务对话和创建任务提案已接入；文档提案仍属于后续阶段。架构见 [ADR 0002](adr/0002-nginx-amphp-pi-durable.md)。
 
 ## API
 
-除健康检查、注册、登录和退出外，接口均要求有效会话。写请求要求 `X-Weave-Request: 1`，若携带 Origin，必须匹配 `APP_ORIGIN`。
+除健康检查、注册、登录和退出外，接口均要求有效会话；`/internal/*` 另要求服务 token。写请求要求 `X-Weave-Request: 1`，若携带 Origin，必须匹配 `APP_ORIGIN` 或请求的 Host。
 
 | 请求                                          | 用途                                           |
 | --------------------------------------------- | ---------------------------------------------- |
-| GET /api/health                               | 进程存活检查，不访问数据库                     |
-| GET /api/health/ready                         | 就绪检查，数据库不可用时返回 503               |
+| GET /api/health                               | 并发检查数据库与 agent，任一不可用时返回 503   |
+| GET /api/health/ready                         | 与 /api/health 相同，供编排系统使用            |
 | POST /api/auth/register                       | 注册并创建工作空间、会话                       |
 | POST /api/auth/login                          | 登录并设置会话 Cookie                          |
 | GET /api/auth/session                         | 当前用户                                       |
@@ -21,6 +21,8 @@
 | GET /api/workspaces                           | 当前用户的工作空间                             |
 | GET /api/workspaces/:id/projects              | 项目列表                                       |
 | POST /api/workspaces/:id/projects             | 创建项目，输入 name                            |
+| GET /api/workspaces/:id/overview              | 工作台概况：项目进度、提案、文档与动态         |
+| GET /api/workspaces/:id/browse/:key           | 按 DEV-n / DOC-n 定位对象                      |
 | GET /api/workspaces/:id/members               | 当前成员，含姓名、邮箱与角色                   |
 | POST /api/workspaces/:id/members              | 管理员按邮箱邀请已注册用户，角色为成员         |
 | DELETE /api/workspaces/:id/members/:userId    | 管理员移除成员，或成员退出自己                 |
@@ -29,6 +31,18 @@
 | DELETE /api/workspaces/:id/storage            | 管理员删除 S3 存储，改回部署的默认存储         |
 | POST /api/projects/:id/uploads                | 上传图片，multipart 字段 file                  |
 | GET /api/uploads/:id                          | 读取图片，校验当前成员关系                     |
+| GET /api/projects/:id/tasks                   | 任务看板列表                                   |
+| POST /api/projects/:id/tasks                  | 创建任务                                       |
+| GET /api/projects/:id/members                 | 可指派的成员                                   |
+| PUT /api/tasks/:id                            | 编辑任务，输入 baseVersion                     |
+| POST /api/tasks/:id/move                      | 拖拽改状态与顺序                               |
+| GET /api/tasks/:id/history                    | 不可变任务历史                                 |
+| GET /api/projects/:id/conversation            | 当前成员在该项目的私有对话快照                 |
+| POST /api/projects/:id/conversation/messages  | 提交消息，返回 202 接收凭据                    |
+| GET /api/conversations/:id/messages           | 历史消息分页                                   |
+| GET /api/conversations/:id/events             | SSE 对话快照订阅                               |
+| GET /api/proposals/:id                        | 读取提案                                       |
+| POST /api/proposals/:id/:decision             | 发起人确认或拒绝提案                           |
 | GET /api/tasks/:id/comments                   | 任务评论与回复，按创建时间排序                 |
 | POST /api/tasks/:id/comments                  | 发表评论，输入 body、可选 parentId             |
 | DELETE /api/tasks/:taskId/comments/:commentId | 作者删除自己的评论；一级评论删除时级联删除回复 |
@@ -39,7 +53,7 @@
 | GET /api/documents/:id/revisions              | 全部版本快照和操作来源                         |
 | POST /api/documents/:id/restore               | 恢复，输入 baseVersion、revisionVersion        |
 
-输入由共享 Zod 契约校验。无权访问和不存在的对象统一返回 404；无效会话返回 401，版本冲突返回 409。响应禁用缓存。
+前端用 Zod 校验响应，PHP 用 `Input` 校验请求。无权访问和不存在的对象统一返回 404；无效会话返回 401，版本冲突返回 409。除图片读取允许 `private, max-age=300` 外，响应禁用缓存。内网 `/internal/*` 只认服务 token，nginx 对浏览器一律返回 404。
 
 非成员调用成员接口返回 404。非管理员邀请或移除他人返回 403「只有管理员可以管理成员。」重复邀请、以及会让空间失去最后一名管理员的移除，返回 409。移除在同一事务中先把该成员负责的任务改为未分配并写入任务历史，再拒绝其在本空间内待确认的提案，然后删除成员关系。邮箱不存在时返回 404，且这一查询发生在确认调用者是管理员之后。
 
@@ -53,7 +67,7 @@
 
 迁移按文件名执行，并记录 SHA-256；已应用迁移的内容发生变化时，迁移会失败，必须新增迁移文件。
 
-创建、编辑和恢复都通过 DocumentsService。编辑和恢复先锁定文档并检查 baseVersion，然后更新当前内容。所有写入均在同一个数据库连接、同一事务内完成：
+创建、编辑和恢复都由 `api/src/Documents.php` 处理。编辑和恢复先锁定文档并检查 baseVersion，然后更新当前内容。所有写入均在同一个数据库连接、同一事务内完成：
 
 1. 检查并共享锁定当前成员关系，避免权限检查与提交之间成员关系被删除。
 2. 创建或更新当前文档；编辑和恢复串行锁定该文档。
@@ -65,7 +79,7 @@
 
 数据库通过复合外键限制文档所属项目和工作空间。每次读取、历史查询及修改均根据当前工作空间成员关系校验。手工修改的发起人与确认人相同，恢复单独记录来源版本；未实现的 AI 来源字段不会伪造数据。
 
-未来接入提案时，应扩展该事务写入路径，不能从 AI 模块直接更新 documents。当前 operation_id 为每次单对象修改生成；多对象提案接入时需引入共享操作标识和逐对象记录标识。
+任务提案已经复用 `Tasks::insert` 的事务写入路径，不能从 AI 模块直接更新业务表。未来的文档提案也应扩展现有事务路径；多对象提案接入时需要共享操作标识和逐对象记录标识。
 
 ## 验证与限制
 
@@ -73,4 +87,4 @@
 
 首版直接返回全部文档版本快照。大型文档、长历史场景应在后续改成分页摘要与按需读取快照。正文限制为 200,000 字符。前端默认以排版后的阅读视图展示文档，点「编辑」进入 Tiptap 所见即所得编辑器（标题 1–3 级、列表、待办、引用、代码块、分隔线、表格、链接、图片；光标在表格里时出现增删行列的操作条），保存后回到阅读视图。正文仍以 Markdown 存储：编辑器打开时把正文规范化为自己的 Markdown 形式，只有之后的修改才算草稿，版本差异仍按 Markdown 逐行比较。文档地址是 `/workspaces/:workspaceId/projects/:projectId/documents/:documentId`。尚无多人实时协作或离线草稿；编辑器不提供 Markdown 无法表达的格式（下划线、颜色、合并单元格）。
 
-注册不验证邮箱归属，不支持密码重置。IP 限流在同一网络多人共享时会共同计数，只有失败的登录与每次注册会占用额度。来源地址按 `TRUSTED_PROXY_HOPS`（默认 1）从 `X-Forwarded-For` 右侧选取；应用直接暴露在公网、前面没有代理时，这个头可以被伪造，生产环境应部署在 Vercel 或反向代理之后。此阶段不把本地开发配置视为生产发布方案。
+注册不验证邮箱归属，不支持密码重置。IP 限流在同一网络多人共享时会共同计数，只有失败的登录与每次注册会占用额度。来源地址按 `TRUSTED_PROXY_HOPS`（默认 1）从 `X-Forwarded-For` 右侧选取；应用直接暴露在公网、前面没有代理时，这个头可以被伪造，生产环境应部署在 nginx 或等价反向代理之后。会话 Cookie 默认按 `APP_ORIGIN` 的协议决定是否加 `Secure`，也可用 `COOKIE_SECURE` 覆盖。

@@ -114,7 +114,7 @@ web 的构建产物位于 `web/dist`。
 
 通过 compose 或等价的长期运行容器部署 nginx、PHP API、单实例 agent、PostgreSQL 与 S3 存储；不再以 Next.js/Vercel 作为当前部署入口。
 
-设置 `.env.example` 中的数据库、`AGENT_SERVICE_TOKEN`、模型和 S3 配置。生产入口使用 HTTPS，并设置与浏览器地址一致的 `APP_ORIGIN` 和正确的 `TRUSTED_PROXY_HOPS`。必须挂载 PostgreSQL、agent SQLite 与 RustFS 持久卷；agent 不能多实例共享同一个 SQLite 文件。
+设置 `.env.example` 中的数据库、`AGENT_SERVICE_TOKEN`、模型和 S3 配置。生产入口使用 HTTPS，并设置与浏览器地址一致的 `APP_ORIGIN` 和正确的 `TRUSTED_PROXY_HOPS`。必须挂载 PostgreSQL、agent SQLite 与 RustFS 持久卷；agent 不能多实例共享同一个 SQLite 文件。nginx 已启用 gzip、CSP 与基础安全响应头；HSTS 应在终止 TLS 的代理上配置。
 
 发布时先备份两套数据库，再同步发布迁移 `014`、`015`、PHP、agent、SPA 和 nginx。SQLite 应使用 backup API 或停机复制数据库与必要 WAL。新消息只存在 agent 存储。详细步骤见[直接切换计划](docs/conversation-cutover.md)。
 
@@ -122,8 +122,8 @@ web 的构建产物位于 `web/dist`。
 
 - 密码使用随机盐和 scrypt 派生；会话通过 HttpOnly、SameSite Cookie 传递，数据库仅保存令牌摘要。
 - 登录和注册共用按来源 IP 计数的数据库限流，每 15 分钟最多 20 次。注册每次都计数；登录先占用一次额度，密码正确时退还，所以只有失败的登录会累计。来源 IP 取 `X-Forwarded-For` 中由可信代理追加的条目，客户端自己伪造的前缀不会生效。
-- 写请求需要 `X-Weave-Request: 1`，浏览器 Origin 必须匹配 `APP_ORIGIN`，未启用跨域访问。
-- PHP 根据 `APP_ORIGIN` 的 HTTPS 配置设置 Secure Cookie。生产反向代理、限流和注册策略仍需部署前细化；当前不提供邮箱验证、密码找回或账号管理。
+- 写请求需要 `X-Weave-Request: 1`，浏览器 Origin 必须匹配 `APP_ORIGIN` 或请求的 Host，未启用跨域访问。
+- 会话 Cookie 默认按 `APP_ORIGIN` 的协议决定是否加 `Secure`；纯 HTTP 部署可用 `COOKIE_SECURE=0` 覆盖，HTTPS 部署可用 `COOKIE_SECURE=1` 强制。生产反向代理、限流和注册策略仍需部署前细化；当前不提供邮箱验证、密码找回或账号管理。
 - 不要把数据库密码或模型密钥写进浏览器可见的配置或构建产物。
 - 任务对话由 Pi Durable 调用 Command Code 的 Chat Completions，使用 agent 的 `CMD_API_KEY`，可选 `CMD_MODEL`。POST 持久接收输入后返回 202，回复通过独立 GET SSE 快照更新。浏览器关闭不会取消生成。
 - 图片上传经过应用服务端：校验成员身份、按文件内容识别类型（不接受 SVG），再写入存储。没有配置 S3 的工作空间使用部署的默认存储；配置后，之后的图片写入该 S3（按路径寻址，兼容 AWS S3、Cloudflare R2、RustFS 等）。默认存储同样按当前配置读取：换了默认存储的桶，已有图片无法显示。S3 访问密钥使用 AES-256-GCM 加密保存。图片按工作空间当前的 S3 读取：更换桶或改回默认存储后，已有 S3 图片无法显示。图片在编辑器里直接显示，正文中以 `![名称](/api/uploads/…)` 保存。
