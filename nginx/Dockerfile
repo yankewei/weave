@@ -12,4 +12,5 @@ RUN pnpm --filter weave-web build
 FROM nginx:1.29-alpine
 
 COPY nginx/default.conf /etc/nginx/conf.d/default.conf
+COPY nginx/security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY --from=build /app/web/dist /usr/share/nginx/html
