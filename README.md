@@ -19,11 +19,11 @@
 - 根据当前成员关系隔离工作空间数据。
 - 文档正文可以点按钮、粘贴或拖入图片（PNG、JPEG、GIF、WebP，单张不超过 4 MB）。图片默认存到部署自带的 S3 兼容存储（compose 里是 RustFS）；管理员可以在设置里为工作空间改用自己的 S3 兼容存储。图片经 `/api/uploads/:id` 读取，每次校验工作空间成员关系。
 
-任务提案目前只创建新任务，不会修改已有任务；修改已有任务仍需手工编辑。文档修改提案、持久化任务队列、邮箱验证与密码重置尚未实现。模型调用在请求内完成，超过 70 秒仍在执行中的记录会在下次访问时标记失败。每个注册账号创建独立工作空间，暂未提供申请加入已有空间的界面。
+任务提案目前只创建新任务，不会修改已有任务；修改已有任务仍需手工编辑。文档修改提案、持久化任务队列、邮箱验证与密码重置尚未实现。对话生成由 agent 的持久任务执行，浏览器断线或关闭不会取消生成，刷新后恢复最新快照。每个注册账号创建独立工作空间，暂未提供申请加入已有空间的界面。
 
 ## 工程结构
 
-当前运行架构为 nginx + AMPHP + Pi Durable，见 [ADR 0002](docs/adr/0002-nginx-amphp-pi-durable.md)。前端是纯客户端 SPA，所有同源 `/api` 请求均由 PHP 处理。默认 compose 不运行 legacy；其迁移脚本、测试和旧源码留待下一阶段清理。
+当前运行架构为 nginx + AMPHP + Pi Durable，见 [ADR 0002](docs/adr/0002-nginx-amphp-pi-durable.md)。前端是纯客户端 SPA，所有同源 `/api` 请求均由 PHP 处理；旧的 Next.js 实现已删除。
 
 agent 使用 SQLite 保存私有对话、输入凭据和执行检查点，读取 `CMD_API_KEY` / `CMD_MODEL`，通过 PHP 内网工具读取资料并提交待确认提案。刷新恢复执行，断线重连恢复最新快照，见 [ADR 0004](docs/adr/0004-conversation-reconnect-uses-snapshots.md)。本项目没有历史导入要求，当前契约见[对话与提案契约](docs/conversation-migration.md)，详细实施计划见[直接切换计划](docs/conversation-cutover.md)。
 
@@ -31,9 +31,9 @@ agent 使用 SQLite 保存私有对话、输入凭据和执行检查点，读取
 web/                      React SPA（Vite + React Router），nginx 托管构建产物
   app/                    入口、路由与 loader（会话检查、重定向、成员校验）
   components/             页面组件与 shadcn/ui 控件
-legacy/                   Next.js Route Handlers 与 lib/services，迁完后删除
 api/                      AMPHP 业务 API（PHP 8.5）
 agent/                    Pi Durable AI 服务（Node 24），只在内网供 api 调用
+migrate/                  PostgreSQL 迁移执行器（Node 24）
 nginx/                    唯一对外入口：托管 SPA，分发 /api
 migrations/               按序执行的 PostgreSQL SQL 迁移
 docs/                     产品、架构和实现说明，ADR 在 docs/adr/
@@ -84,7 +84,7 @@ pnpm up
 pnpm --filter weave-web dev      # http://localhost:5173
 ```
 
-`pnpm --filter weave-legacy db:migrate` 仍可从本机迁移 `.env` 指向的数据库，例如 compose 之外的本机 Postgres。修改 `api/` 或 `agent/` 后，用 `docker compose up -d --build <服务名>` 重新构建对应服务。也可以在本机直接运行：`pnpm --filter weave-agent dev`，或 `(set -a; . ./.env; php api/bin/server.php)`（需要 PHP 8.5 及 `pcntl`、`pgsql` 扩展，先执行 `composer install --working-dir=api`）。
+`pnpm db:migrate:local`（或 `pnpm --filter weave-migrate db:migrate`）仍可从本机迁移 `.env` 指向的数据库，例如 compose 之外的本机 Postgres。修改 `api/` 或 `agent/` 后，用 `docker compose up -d --build <服务名>` 重新构建对应服务。也可以在本机直接运行：`pnpm --filter weave-agent dev`，或 `(set -a; . ./.env; php api/bin/server.php)`（需要 PHP 8.5 及 `pcntl`、`pgsql` 扩展，先执行 `composer install --working-dir=api`）。
 
 ## 使用流程
 
@@ -106,11 +106,9 @@ pnpm --filter weave-web dev      # http://localhost:5173
 pnpm check
 ```
 
-根目录的 `check` 依次检查根目录文档格式、web 与 legacy（ESLint、类型检查、Vitest、Prettier 与构建）、agent（类型检查、进程测试与 Prettier）和 api（PHPStan 最高级别与 PHPUnit）。api 的测试会启动真实的 `bin/server.php`，需要本机的 Postgres 和 RustFS，先执行 `pnpm db:up`。最后的 `pnpm test:cutover` 使用真实 PHP 与 agent、临时 schema 和 SQLite、受控模型，验证输入去重、断连后继续执行、提案回写和重复确认只创建一次任务。
+根目录的 `check` 依次检查根目录文档格式、web（ESLint、类型检查、Vitest、Prettier 与构建）、agent（类型检查、进程测试与 Prettier）和 api（PHPStan 最高级别与 PHPUnit）。api 的测试会启动真实的 `bin/server.php`，使用临时 schema，需要本机的 Postgres 和 RustFS，先执行 `pnpm db:up`。最后的 `pnpm test:cutover` 使用真实 PHP 与 agent、临时 schema 和 SQLite、受控模型，验证输入去重、断连后继续执行、提案回写和重复确认只创建一次任务。随后 `pnpm test:e2e` 启动真实的 `bin/server.php`，通过 HTTP 走完注册、项目、文档、任务、评论与编号定位；PHP 测试覆盖权限隔离、权限撤销、并发冲突、历史恢复、无变化编辑、事务回滚、历史不可变、任务评论与回复、成员移除等。
 
-集成测试使用 `embedded-postgres` 创建临时的真实 PostgreSQL 17 实例，自动迁移并清理，不读取 `.env`、不访问开发数据库，也不依赖 Docker。测试覆盖权限隔离、权限撤销、并发冲突、历史恢复、无变化编辑、事务回滚、历史不可变、任务评论与回复、成员移除等。`legacy/scripts/e2e.mjs`（`pnpm --filter weave-legacy e2e`）是额外的 API 契约验证：启动生产构建并通过 HTTP 走完注册、项目、文档、任务、评论与编号定位，之后也用来验证迁到 AMPHP 的接口。
-
-web 的构建产物位于 `web/dist`，legacy 的位于 `legacy/.next`。
+web 的构建产物位于 `web/dist`。
 
 ## 部署
 
@@ -118,7 +116,7 @@ web 的构建产物位于 `web/dist`，legacy 的位于 `legacy/.next`。
 
 设置 `.env.example` 中的数据库、`AGENT_SERVICE_TOKEN`、模型和 S3 配置。生产入口使用 HTTPS，并设置与浏览器地址一致的 `APP_ORIGIN` 和正确的 `TRUSTED_PROXY_HOPS`。必须挂载 PostgreSQL、agent SQLite 与 RustFS 持久卷；agent 不能多实例共享同一个 SQLite 文件。
 
-发布时先备份两套数据库，再同步发布迁移 `014`、PHP、agent、SPA 和 nginx。没有旧对话需要复制，不执行导入。SQLite 应使用 backup API 或停机复制数据库与必要 WAL。新消息只存在 agent 存储，不应回退到 legacy 读取。详细步骤见[直接切换计划](docs/conversation-cutover.md)。
+发布时先备份两套数据库，再同步发布迁移 `014`、`015`、PHP、agent、SPA 和 nginx。SQLite 应使用 backup API 或停机复制数据库与必要 WAL。新消息只存在 agent 存储。详细步骤见[直接切换计划](docs/conversation-cutover.md)。
 
 ## 配置与边界
 
@@ -126,7 +124,7 @@ web 的构建产物位于 `web/dist`，legacy 的位于 `legacy/.next`。
 - 登录和注册共用按来源 IP 计数的数据库限流，每 15 分钟最多 20 次。注册每次都计数；登录先占用一次额度，密码正确时退还，所以只有失败的登录会累计。来源 IP 取 `X-Forwarded-For` 中由可信代理追加的条目，客户端自己伪造的前缀不会生效。
 - 写请求需要 `X-Weave-Request: 1`，浏览器 Origin 必须匹配 `APP_ORIGIN`，未启用跨域访问。
 - PHP 根据 `APP_ORIGIN` 的 HTTPS 配置设置 Secure Cookie。生产反向代理、限流和注册策略仍需部署前细化；当前不提供邮箱验证、密码找回或账号管理。
-- 不要把数据库密码或模型密钥写入任何 `NEXT_PUBLIC_` 变量，它们会被打进浏览器产物。
+- 不要把数据库密码或模型密钥写进浏览器可见的配置或构建产物。
 - 任务对话由 Pi Durable 调用 Command Code 的 Chat Completions，使用 agent 的 `CMD_API_KEY`，可选 `CMD_MODEL`。POST 持久接收输入后返回 202，回复通过独立 GET SSE 快照更新。浏览器关闭不会取消生成。
 - 图片上传经过应用服务端：校验成员身份、按文件内容识别类型（不接受 SVG），再写入存储。没有配置 S3 的工作空间使用部署的默认存储；配置后，之后的图片写入该 S3（按路径寻址，兼容 AWS S3、Cloudflare R2、RustFS 等）。默认存储同样按当前配置读取：换了默认存储的桶，已有图片无法显示。S3 访问密钥使用 AES-256-GCM 加密保存。图片按工作空间当前的 S3 读取：更换桶或改回默认存储后，已有 S3 图片无法显示。图片在编辑器里直接显示，正文中以 `![名称](/api/uploads/…)` 保存。
 - 迁移文件会记录 SHA-256 校验值；已应用的文件被修改时迁移会失败，应改为新增迁移。

@@ -9,7 +9,7 @@
     "pnpm": "11.x"
   },
   "scripts": {
-    "check": "pnpm format:check && pnpm --recursive --workspace-concurrency=1 run check && composer --working-dir=api check && pnpm test:cutover",
+    "check": "pnpm format:check && pnpm --recursive --workspace-concurrency=1 run check && composer --working-dir=api check && pnpm test:cutover && pnpm test:e2e",
     "format": "prettier --write \"*.{md,json,yaml}\" docs .github",
     "format:check": "prettier --check \"*.{md,json,yaml}\" docs .github",
     "up": "docker compose up --build",
@@ -17,7 +17,9 @@
     "db:up": "docker compose up -d postgres rustfs",
     "db:down": "docker compose down",
     "db:migrate": "docker compose run --rm --build migrate",
-    "test:cutover": "node --test agent/test/cutover.integration.ts"
+    "db:migrate:local": "pnpm --filter weave-migrate db:migrate",
+    "test:cutover": "node --test agent/test/cutover.integration.ts",
+    "test:e2e": "node api/tests/e2e.mjs"
   },
   "devDependencies": {
     "prettier": "3.9.10"

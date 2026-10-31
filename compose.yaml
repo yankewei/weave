@@ -59,8 +59,7 @@ services:
   migrate:
     build:
       context: .
-      dockerfile: legacy/Dockerfile
-      target: migrate
+      dockerfile: migrate/Dockerfile
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432

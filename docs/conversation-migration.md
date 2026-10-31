@@ -1,6 +1,6 @@
 # 对话与提案迁移契约
 
-本文记录当前持久对话契约。第 5 阶段已将浏览器对话、提案与就绪检查统一交给 PHP；默认 compose 不启动 legacy。用户明确没有历史负担，直接切换，不建设历史导入，详见[实施计划](conversation-cutover.md)。架构以 ADR 0002 为基础，私有归属遵循 ADR 0001，重连语义按 ADR 0004 修正。
+本文记录当前持久对话契约。第 5 阶段已将浏览器对话、提案与就绪检查统一交给 PHP，第 6 阶段已删除 legacy。用户明确没有历史负担，直接切换，不建设历史导入，详见[实施计划](conversation-cutover.md)。架构以 ADR 0002 为基础，私有归属遵循 ADR 0001，重连语义按 ADR 0004 修正。
 
 ## 范围与现状
 
@@ -25,7 +25,7 @@ nginx 的所有 `/api` 请求进入 PHP。消息 POST 返回 202 接收凭据，
 - `admissionId`：PHP 为每次接收尝试分配并持久保存的 UUID，用于封存迟到提交；正常网络重试复用，只有原 admission 已确认关闭且未提交时才分配新的值。`requestId` 和 `runId` 始终不变。
 - 消息公开 `id` 保持 UUID：用户消息的 UUID 保存在 agent 应用记录中；新 assistant 消息从不可变 Pi 对话和 entry 标识派生 UUIDv8。重连与分页不得给同一消息重新分配 ID。Pi 内部标识当前是数值，PHP 将其当作不透明标识使用，不能假设它是 UUID。
 
-迁移 `014` 将项目唯一约束改成 `(project_id, created_by)` 并删除 `import_status`。不修改已提交迁移，不复制或清空现有消息。旧消息表与旧执行外键暂留，随第 6 阶段另加迁移清理；新执行通过 `conversation_inputs` 关联。保留 `change_proposals.ai_run_id` 唯一性与任务历史外键。
+迁移 `014` 将项目唯一约束改成 `(project_id, created_by)` 并删除 `import_status`；迁移 `015` 删除旧 `messages` 表和 `ai_runs.trigger_message_id`，保留历史 `ai_runs` 供提案与任务追溯。不修改已提交迁移，不复制或清空现有消息。新执行通过 `conversation_inputs` 关联。保留 `change_proposals.ai_run_id` 唯一性与任务历史外键。
 
 ## 权限
 
@@ -137,9 +137,9 @@ agent 调 PHP 的 `/internal/agent/runs/:runId/` 路由：`GET context` 读取�
 
 ## 直接切换与部署
 
-没有待导入的历史对话，不提供导入接口或模式。部署须同时发布迁移 `014`、PHP、agent、web 与 nginx。默认 compose 已停用 legacy；migrate 服务暂时仍使用 legacy 的迁移镜像，下一阶段迁走。
+没有待导入的历史对话，不提供导入接口或模式。部署须同时发布迁移 `014`、`015`、PHP、agent、web 与 nginx。compose 的 migrate 服务使用独立的 `migrate/` 构建，不再依赖 legacy。
 
-上线前保存 PostgreSQL 和 agent SQLite 的一致备份。SQLite 使用 backup API，或停止 agent 后复制数据库及必要 WAL。只有一个 agent 实例打开持久卷。切换后新消息只在 SQLite 中，不应退回共享读取的 legacy；需要修复时保留两套存储并向前修复。
+上线前保存 PostgreSQL 和 agent SQLite 的一致备份。SQLite 使用 backup API，或停止 agent 后复制数据库及必要 WAL。只有一个 agent 实例打开持久卷。切换后新消息只在 SQLite 中，不应退回共享读取；需要修复时保留两套存储并向前修复。
 
 ## 分阶段交付与验收
 
@@ -147,8 +147,8 @@ agent 调 PHP 的 `/internal/agent/runs/:runId/` 路由：`GET context` 读取�
 
 第 5 阶段完成前端异步发送、重试凭据、SSE 重连、分页与路由切换，见[阶段 review](reviews/conversation-migration-stage-5.md)。根目录 `pnpm check` 包含真实 PHP + Pi Durable + 受控模型链路，使用隔离 PostgreSQL schema 与临时 SQLite，不使用真实模型密钥。也可单独运行 `pnpm test:cutover`。
 
-第 6 阶段尚待实现：移除 legacy 源码和依赖、迁走迁移工具与有价值测试、清理旧消息结构，并做双存储备份恢复演练。本阶段没有对实际数据库执行迁移或线上切流。
+第 6 阶段已完成：删除 legacy 源码与依赖，迁移执行器搬到 `migrate/`，HTTP 契约脚本迁到 `api/tests/e2e.mjs`，并新增迁移 `015` 清理旧消息结构。见[阶段 review](reviews/conversation-migration-stage-6.md)。双存储备份恢复演练仍需在实际发布前执行。
 
-删除 legacy 前必须迁走 `scripts/migrate.mjs`、HTTP 契约验证脚本和仍有价值的业务测试，更新 compose 的 migrate 镜像、根目录脚本、CI 与锁文件。不能因删除目录而丢掉迁移或测试能力。
+`pnpm check` 继续覆盖 web、agent、PHP、真实链路 cutover 测试和通过 HTTP 的 e2e 契约验证。
 
 agent 设置 `AGENT_API_URL` 为实际 PHP 内网监听的 http(s) origin 后启用三个业务工具；compose 已配置为 `http://api:8080`。不配置时只讨论需求。服务端只安装项目摘要读取、编号引用读取和待确认提案提交，不安装 shell 或任意网络工具。`AGENT_API_URL` 不能指向 nginx 的公开入口，nginx 会拒绝内部路径。

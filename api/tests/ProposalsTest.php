@@ -80,14 +80,9 @@ final class ProposalsTest extends TestCase
         $project = $this->project($admin, $workspace);
         $run = $this->seedRun($workspace, $project, $user);
         $id = self::text(self::json($this->internal($run, 'proposal', self::draft())), 'proposal', 'id');
-        $this->server->database->execute(
-            "INSERT INTO messages(id, conversation_id, workspace_id, author_type, author_id, body)
-             SELECT gen_random_uuid(), conversation_id, workspace_id, 'user', initiator_id, '私有触发消息' FROM ai_runs WHERE id = $1", [$run],
-        );
         $read = self::json($this->request('GET', "/api/proposals/{$id}", $member));
         self::assertSame($user, self::at($read, 'proposal', 'initiator', 'id'));
         self::assertArrayNotHasKey('conversation', $read);
-        self::assertStringNotContainsString('私有触发消息', Json::encode($read));
         self::assertSame(403, $this->request('POST', "/api/proposals/{$id}/confirm", $member)->status);
         self::assertSame(404, $this->request('GET', "/api/proposals/{$id}", $outsider)->status);
         self::assertSame(401, $this->request('GET', "/api/proposals/{$id}", null)->status);
@@ -189,25 +184,6 @@ final class ProposalsTest extends TestCase
         $context = $this->internal($run, 'context');
         self::assertSame(200, $context->status);
         self::assertSame([], self::at(self::json($context), 'documents'));
-    }
-
-    public function testLegacyRunStillWritesButCannotInvokeDurableTools(): void
-    {
-        [$token, $workspace, $user] = $this->register('旧接口兼容');
-        $project = $this->project($token, $workspace);
-        $run = Sql::transaction($this->server->database, static function (PostgresExecutor $db) use ($workspace, $project, $user): string {
-            $ids = $db->query('SELECT gen_random_uuid() AS conversation, gen_random_uuid() AS message, gen_random_uuid() AS run')->fetchRow();
-            $conversation = Sql::string($ids, 'conversation');
-            $message = Sql::string($ids, 'message');
-            $run = Sql::string($ids, 'run');
-            $db->execute('INSERT INTO conversations(id, workspace_id, project_id, created_by) VALUES($1,$2,$3,$4)', [$conversation, $workspace, $project, $user]);
-            $db->execute("INSERT INTO messages(id, conversation_id, workspace_id, author_type, author_id, body) VALUES($1,$2,$3,'user',$4,'旧消息')", [$message, $conversation, $workspace, $user]);
-            $db->execute("INSERT INTO ai_runs(id, workspace_id, conversation_id, trigger_message_id, initiator_id, status, model) VALUES($1,$2,$3,$4,$5,'running','legacy')", [$run, $workspace, $conversation, $message, $user]);
-
-            return $run;
-        });
-        self::assertSame(404, $this->internal($run, 'context')->status);
-        self::assertSame(404, $this->internal($run, 'proposal', self::draft())->status);
     }
 
     /**

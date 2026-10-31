@@ -1,106 +1,78 @@
+import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import EmbeddedPostgres from 'embedded-postgres';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 
-const databaseDir = mkdtempSync(join(tmpdir(), 'weave-next-'));
-const port = 54329;
-const base = 'http://127.0.0.1:3100';
-const email = `e2e-${Date.now()}@example.com`;
-const password = 'correct-horse-battery';
-
-const database = new EmbeddedPostgres({
-  databaseDir,
-  user: 'weave',
-  password: 'weave',
-  port,
-  persistent: false,
+// Stubs the agent health probe; these routes only need the business API.
+const agent = createServer((request, response) => {
+  response.writeHead(200, { 'content-type': 'application/json' });
+  response.end('{}');
 });
-await database.initialise();
-await database.start();
-await database.createDatabase('weave');
+agent.listen(0, '127.0.0.1');
+await once(agent, 'listening');
+const agentAddress = agent.address();
+assert(agentAddress && typeof agentAddress === 'object');
+const agentUrl = `http://127.0.0.1:${agentAddress.port}`;
 
-const connectionString = `postgres://weave:weave@127.0.0.1:${port}/weave`;
-const env = {
-  ...process.env,
-  DATABASE_URL: connectionString,
-  APP_ORIGIN: base,
-  NODE_ENV: 'production',
-  PORT: '3100',
+const php = spawn(
+  'php',
+  ['api/tests/fixtures/e2e.php', agentUrl, 'test'],
+  { cwd: new URL('../..', import.meta.url), stdio: ['pipe', 'pipe', 'pipe'] },
+);
+let base = '';
+let errors = '';
+php.stdout.on('data', (chunk) => {
+  base += String(chunk);
+});
+php.stderr.on('data', (chunk) => {
+  errors += String(chunk);
+});
+
+const stop = async () => {
+  if (php.exitCode !== null) return;
+  const exit = once(php, 'exit');
+  php.stdin.end();
+  await exit;
 };
-
-function run(command, args, cwd) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd,
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let out = '';
-    child.stdout.on('data', (chunk) => (out += chunk));
-    child.stderr.on('data', (chunk) => (out += chunk));
-    child.on('exit', (code) =>
-      code === 0
-        ? resolve(out)
-        : reject(new Error(`${command} failed: ${out}`)),
-    );
-  });
-}
-
-const appDirectory = new URL('../', import.meta.url).pathname;
-await run('node', ['scripts/migrate.mjs'], appDirectory);
-console.log('migrated');
-
-let cookie = '';
-async function call(method, path, body, options = {}) {
-  const headers = {
-    'Content-Type': 'application/json',
-    ...(options.headers ?? {}),
-  };
-  if (method !== 'GET') headers['x-weave-request'] = '1';
-  if (method !== 'GET') headers.Origin = base;
-  if (cookie) headers.Cookie = cookie;
-  const response = await fetch(`${base}${path}`, {
-    method,
-    headers,
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const setCookie = response.headers.getSetCookie?.() ?? [];
-  if (setCookie.length) cookie = setCookie[0].split(';')[0];
-  const text = await response.text();
-  let json = null;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    /* not JSON */
-  }
-  return { status: response.status, json, text };
-}
-
-function expect(label, actual, wanted) {
-  if (actual !== wanted)
-    throw new Error(`${label}: expected ${wanted}, got ${actual}`);
-  console.log(`ok ${label} (${actual})`);
-}
-
-const server = spawn('pnpm', ['exec', 'next', 'start', '-p', '3100'], {
-  cwd: appDirectory,
-  env,
-  detached: true,
-  stdio: ['ignore', 'ignore', 'ignore'],
-});
+process.on('SIGINT', () => void stop());
 
 try {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    try {
-      const ready = await fetch(`${base}/api/health/ready`);
-      if (ready.ok) break;
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
+  const deadline = Date.now() + 15000;
+  while (!base.trim().startsWith('http://')) {
+    if (php.exitCode !== null) throw new Error(errors);
+    if (Date.now() > deadline) throw new Error(`No server URL:\n${errors}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
+  base = base.trim();
+
+  const email = `e2e-${Date.now()}@example.com`;
+  const password = 'correct-horse-battery';
+  let cookie = '';
+  const call = async (method, path, body) => {
+    const headers = { 'Content-Type': 'application/json' };
+    if (method !== 'GET') headers['x-weave-request'] = '1';
+    if (cookie) headers.Cookie = cookie;
+    const response = await fetch(`${base}${path}`, {
+      method,
+      headers,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const setCookie = response.headers.getSetCookie?.() ?? [];
+    if (setCookie.length) cookie = setCookie[0].split(';')[0];
+    const text = await response.text();
+    let json = null;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      /* not JSON */
+    }
+    return { status: response.status, json, text };
+  };
+  const expect = (label, actual, wanted) => {
+    assert.equal(actual, wanted, `${label}: expected ${wanted}, got ${actual}`);
+    console.log(`ok ${label} (${actual})`);
+  };
+
   expect('health', (await call('GET', '/api/health')).status, 200);
   expect('ready', (await call('GET', '/api/health/ready')).status, 200);
   expect(
@@ -108,20 +80,12 @@ try {
     (await call('GET', '/api/auth/session')).status,
     401,
   );
-  expect(
-    'csrf blocked',
-    (
-      await (async () => {
-        const response = await fetch(`${base}/api/auth/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password }),
-        });
-        return { status: response.status };
-      })()
-    ).status,
-    403,
-  );
+  const csrf = await fetch(`${base}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  expect('csrf blocked', csrf.status, 403);
 
   const registered = await call('POST', '/api/auth/register', {
     email,
@@ -147,10 +111,7 @@ try {
   const document = await call(
     'POST',
     `/api/projects/${project.json.id}/documents`,
-    {
-      title: '需求',
-      body: '第一版',
-    },
+    { title: '需求', body: '第一版' },
   );
   expect('create document', document.status, 201);
   expect('document version', document.json.version, 1);
@@ -237,11 +198,8 @@ try {
   expect('logout', (await call('GET', '/api/auth/session')).status, 401);
   console.log('ALL PASSED');
 } finally {
-  try {
-    process.kill(-server.pid, 'SIGTERM');
-  } catch {
-    server.kill('SIGTERM');
-  }
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  await database.stop();
+  await stop();
+  assert.equal(php.exitCode, 0, errors);
+  agent.closeAllConnections();
+  await new Promise((resolve) => agent.close(() => resolve()));
 }

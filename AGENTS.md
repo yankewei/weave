@@ -1,6 +1,6 @@
 # Weave 前端约束
 
-前端代码位于 `web/`，下文的代码路径（`components/ui`、`app/globals.css` 等）都相对于 `web/`；`DESIGN.md` 与 `.agents/` 仍在仓库根目录。web 是 Vite + React Router 的纯客户端 SPA，只通过同源 `/api` 访问后端，不要引入服务端渲染。整体架构见 `docs/adr/0002-nginx-amphp-pi-durable.md`：`api/` 是 AMPHP 业务 API，`agent/` 是 Pi Durable AI 服务，`legacy/` 是待迁移的 Next Route Handlers。
+前端代码位于 `web/`，下文的代码路径（`components/ui`、`app/globals.css` 等）都相对于 `web/`；`DESIGN.md` 与 `.agents/` 仍在仓库根目录。web 是 Vite + React Router 的纯客户端 SPA，只通过同源 `/api` 访问后端，不要引入服务端渲染。整体架构见 `docs/adr/0002-nginx-amphp-pi-durable.md`：`api/` 是 AMPHP 业务 API，`agent/` 是 Pi Durable AI 服务，旧的 Next Route Handlers 已删除。
 
 ## UI 来源与设计
 

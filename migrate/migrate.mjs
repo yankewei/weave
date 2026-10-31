@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 
 const { Pool } = pg;
-const directory = fileURLToPath(new URL('../../migrations/', import.meta.url));
+const directory = fileURLToPath(new URL('../migrations/', import.meta.url));
 
 const pool = new Pool(
   process.env.DATABASE_URL
